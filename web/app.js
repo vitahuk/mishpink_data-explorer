@@ -102,6 +102,7 @@ const state = {
     baseLayers: null,
     pointsLayer: null,
     trajectoryLayer: null,
+    endpointLayer: null,
     isInitialized: false,
   },
 };
@@ -295,6 +296,10 @@ async function apiUpdateGroup(groupId, payload) {
 // NEW: raw events for timeline
 async function apiGetSessionEvents(sessionId) {
   return apiGet(`/api/sessions/${encodeURIComponent(sessionId)}/events`);
+}
+
+async function apiGetSessionSpatialTrace(sessionId) {
+  return apiGet(`/api/sessions/${encodeURIComponent(sessionId)}/spatial-trace`);
 }
 
 // ===== Rendering: metrics blocks =====
@@ -1500,6 +1505,7 @@ function getMapControlsState() {
   return {
     showPoints: $("#mapShowPoints")?.checked ?? true,
     showTrajectory: $("#mapShowTrajectory")?.checked ?? true,
+    showEndpoints: $("#mapShowEndpoints")?.checked ?? true,
     pointsColor: $("#mapPointsColorInput")?.value ?? "#4cc9f0",
     lineColor: $("#mapLineColorInput")?.value ?? "#f72585",
   };
@@ -1509,6 +1515,7 @@ function syncMapLegend() {
   const controls = getMapControlsState();
   const pointSwatch = $("#mapLegendPointSwatch");
   const lineSwatch = $("#mapLegendLineSwatch");
+  const endpointSwatch = $("#mapLegendEndpointSwatch");
   if (pointSwatch) {
     pointSwatch.style.background = controls.pointsColor;
     pointSwatch.style.opacity = controls.showPoints ? "1" : ".35";
@@ -1517,12 +1524,16 @@ function syncMapLegend() {
     lineSwatch.style.borderTopColor = controls.lineColor;
     lineSwatch.style.opacity = controls.showTrajectory ? "1" : ".35";
   }
+  if (endpointSwatch) {
+    endpointSwatch.style.opacity = controls.showEndpoints ? "1" : ".35";
+  }
 }
 
 function applyMapLayerStyles() {
   const controls = getMapControlsState();
   const pointsLayer = state.map.pointsLayer;
   const trajectoryLayer = state.map.trajectoryLayer;
+  const endpointLayer = state.map.endpointLayer;
 
   if (pointsLayer?.setStyle) {
     pointsLayer.setStyle({
@@ -1542,6 +1553,16 @@ function applyMapLayerStyles() {
     });
   }
 
+  if (endpointLayer?.setStyle) {
+    endpointLayer.setStyle({
+      color: "#ff9f1c",
+      fillColor: "#ff9f1c",
+      fillOpacity: 0.95,
+      radius: 8,
+      weight: 2,
+    });
+  }
+
   const map = state.map.leafletMap;
   if (map && pointsLayer) {
     const hasLayer = map.hasLayer(pointsLayer);
@@ -1555,7 +1576,161 @@ function applyMapLayerStyles() {
     if (!controls.showTrajectory && hasLayer) map.removeLayer(trajectoryLayer);
   }
 
+  if (map && endpointLayer) {
+    const hasLayer = map.hasLayer(endpointLayer);
+    if (controls.showEndpoints && !hasLayer) map.addLayer(endpointLayer);
+    if (!controls.showEndpoints && hasLayer) map.removeLayer(endpointLayer);
+  }
+
   syncMapLegend();
+}
+
+function setMapPlaceholderStatus({ title, detail, isError = false }) {
+  const box = $("#mapDataPlaceholder");
+  if (!box) return;
+  box.innerHTML = `
+    <div class="empty-title">${escapeHtml(title ?? "Stav mapy")}</div>
+    <div class="muted small${isError ? "" : ""}">${escapeHtml(detail ?? "")}</div>
+  `;
+}
+
+function clearSessionMapData() {
+  state.map.pointsLayer?.clearLayers?.();
+  state.map.trajectoryLayer?.clearLayers?.();
+  state.map.endpointLayer?.clearLayers?.();
+}
+
+function buildPointsFeatureCollection(spatial) {
+  const popups = Array.isArray(spatial?.popups) ? spatial.popups : [];
+  const features = popups
+    .filter((p) => Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lon)))
+    .map((p) => ({
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: [Number(p.lon), Number(p.lat)],
+      },
+      properties: {
+        name: String(p?.name ?? "—"),
+        timestamp: Number(p?.timestamp),
+      },
+    }));
+
+  return { type: "FeatureCollection", features };
+}
+
+function buildTrackFeatureCollection(spatial) {
+  const points = Array.isArray(spatial?.track?.points) ? spatial.track.points : [];
+  if (points.length < 2) {
+    return { type: "FeatureCollection", features: [] };
+  }
+
+  const coordinates = points
+    .filter((xy) => Array.isArray(xy) && xy.length >= 2)
+    .map((xy) => [Number(xy[1]), Number(xy[0])])
+    .filter((xy) => Number.isFinite(xy[0]) && Number.isFinite(xy[1]));
+
+  if (coordinates.length < 2) {
+    return { type: "FeatureCollection", features: [] };
+  }
+
+  return {
+    type: "FeatureCollection",
+    features: [{
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates,
+      },
+      properties: {},
+    }],
+  };
+}
+
+function buildEndpointFeatureCollection(spatial) {
+  const endpoints = spatial?.movementEndpoints ?? {};
+  const out = [];
+
+  [
+    ["Začátek", endpoints?.start],
+    ["Konec", endpoints?.end],
+  ].forEach(([kind, point]) => {
+    if (!point) return;
+    const lat = Number(point.lat);
+    const lon = Number(point.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+    out.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [lon, lat] },
+      properties: {
+        kind,
+        timestamp: Number(point.timestamp),
+      },
+    });
+  });
+
+  return { type: "FeatureCollection", features: out };
+}
+
+function fitMapToRenderedData() {
+  const map = state.map.leafletMap;
+  const pointsLayer = state.map.pointsLayer;
+  const trajectoryLayer = state.map.trajectoryLayer;
+  const endpointLayer = state.map.endpointLayer;
+  if (!map || !pointsLayer || !trajectoryLayer || !endpointLayer) return;
+
+  const group = L.featureGroup([pointsLayer, trajectoryLayer, endpointLayer]);
+  const bounds = group.getBounds();
+  if (bounds.isValid()) {
+    map.fitBounds(bounds, { padding: [28, 28], maxZoom: 17 });
+  }
+}
+
+function renderSpatialTraceToMap(spatialPayload) {
+  ensureSessionMapInitialized();
+  clearSessionMapData();
+
+  const spatial = spatialPayload?.spatial ?? { track: { points: [] }, popups: [] };
+  const pointsGeoJson = buildPointsFeatureCollection(spatial);
+  const trackGeoJson = buildTrackFeatureCollection(spatial);
+  const endpointGeoJson = buildEndpointFeatureCollection(spatial);
+
+  state.map.pointsLayer?.addData?.(pointsGeoJson);
+  state.map.trajectoryLayer?.addData?.(trackGeoJson);
+  state.map.endpointLayer?.addData?.(endpointGeoJson);
+
+  state.map.pointsLayer?.eachLayer?.((layer) => {
+    const name = layer?.feature?.properties?.name ?? "—";
+    const ts = layer?.feature?.properties?.timestamp;
+    const label = Number.isFinite(Number(ts)) ? `${name} (${Number(ts)})` : String(name);
+    layer.bindTooltip(label, { direction: "top", offset: [0, -8] });
+  });
+
+  state.map.endpointLayer?.eachLayer?.((layer) => {
+    const kind = layer?.feature?.properties?.kind ?? "Bod";
+    const ts = layer?.feature?.properties?.timestamp;
+    const label = Number.isFinite(Number(ts)) ? `${kind} (${Number(ts)})` : String(kind);
+    layer.bindTooltip(label, { direction: "top", offset: [0, -8] });
+  });
+
+  applyMapLayerStyles();
+  fitMapToRenderedData();
+
+  const pointCount = Array.isArray(spatial?.popups) ? spatial.popups.length : 0;
+  const trackCount = Array.isArray(spatial?.track?.points) ? spatial.track.points.length : 0;
+  const endpoints = spatial?.movementEndpoints ?? {};
+  const endpointCount = (endpoints?.start ? 1 : 0) + (endpoints?.end ? 1 : 0);
+  setMapPlaceholderStatus({
+    title: "Data načtena",
+    detail: `Body (popupopen): ${pointCount} · Body trajektorie (moveend): ${trackCount} · Začátek/konec: ${endpointCount}`,
+  });
+}
+
+async function loadSpatialTraceIntoMap(sessionId) {
+  setMapPlaceholderStatus({ title: "Načítám mapová data…", detail: "Probíhá příprava trajektorie a popup bodů." });
+  const payload = await apiGetSessionSpatialTrace(sessionId);
+  renderSpatialTraceToMap(payload);
 }
 
 function ensureSessionMapInitialized() {
@@ -1612,15 +1787,27 @@ function ensureSessionMapInitialized() {
     },
   }).addTo(leafletMap);
 
+  const endpointLayer = L.geoJSON({ type: "FeatureCollection", features: [] }, {
+    pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
+      radius: 8,
+      color: "#ff9f1c",
+      fillColor: "#ff9f1c",
+      fillOpacity: 0.95,
+      weight: 2,
+    }),
+  }).addTo(leafletMap);
+
   L.control.layers(baseLayers, {
     "Body": pointsLayer,
     "Trajektorie": trajectoryLayer,
+    "Začátek/konec": endpointLayer,
   }, { collapsed: false }).addTo(leafletMap);
 
   state.map.leafletMap = leafletMap;
   state.map.baseLayers = baseLayers;
   state.map.pointsLayer = pointsLayer;
   state.map.trajectoryLayer = trajectoryLayer;
+  state.map.endpointLayer = endpointLayer;
   state.map.isInitialized = true;
 
   applyMapLayerStyles();
@@ -1637,11 +1824,26 @@ function openSessionMapModal() {
 
   show($("#sessionMapModal"));
   ensureSessionMapInitialized();
+  clearSessionMapData();
   syncMapLegend();
 
   if (state.map.leafletMap) {
     setTimeout(() => state.map.leafletMap.invalidateSize(), 50);
   }
+
+  if (!s?.session_id) {
+    setMapPlaceholderStatus({ title: "Vyber session", detail: "Bez vybrané session nelze načíst mapová data." });
+    return;
+  }
+
+  loadSpatialTraceIntoMap(s.session_id).catch((e) => {
+    clearSessionMapData();
+    setMapPlaceholderStatus({
+      title: "Chyba při načítání dat",
+      detail: e?.message ?? String(e),
+      isError: true,
+    });
+  });
 }
 
 function closeSessionMapModal() {
@@ -2590,6 +2792,7 @@ function wireModal() {
   const mapControlIds = [
     "#mapShowPoints",
     "#mapShowTrajectory",
+    "#mapShowEndpoints",
     "#mapPointsColorInput",
     "#mapLineColorInput",
   ];

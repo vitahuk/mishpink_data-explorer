@@ -24,6 +24,7 @@ from app.parsing.maptrack_csv import (
     get_user_id_column,
     infer_session_id_from_filename,
     validate_maptrack_df,
+    build_spatial_trace_for_user,
 )
 from app.parsing.column_aliases import SOC_DEMO_COLUMN_ALIASES, resolve_column_aliases, resolve_single_column
 from app.analysis.metrics import (
@@ -377,6 +378,41 @@ def get_session_events(session_id: str):
         "session_id": s.session_id,
         "user_id": s.user_id,
         "events": out,
+    }
+
+
+@app.get("/api/sessions/{session_id}/spatial-trace")
+def get_session_spatial_trace(session_id: str):
+    s = STORE.get(session_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Session nenalezena.")
+
+    csv_path = Path(s.file_path)
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="CSV soubor pro session nenalezen.")
+
+    usecols = ["timestamp", "event_name", "event_detail", "userId", "userid", "user_id"]
+    try:
+        df = pd.read_csv(csv_path, usecols=lambda c: c in usecols)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Nelze načíst spatial data z CSV: {e}")
+
+    user_id = s.user_id
+    user_col = get_user_id_column(df)
+    if not user_id and user_col and not df.empty:
+        first_uid = df.iloc[0].get(user_col)
+        if first_uid is not None and not (isinstance(first_uid, float) and pd.isna(first_uid)):
+            user_id = str(first_uid).strip()
+
+    try:
+        trace = build_spatial_trace_for_user(df, user_id=user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "session_id": s.session_id,
+        "user_id": s.user_id,
+        "spatial": trace,
     }
 
 

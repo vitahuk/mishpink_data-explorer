@@ -6,12 +6,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>MapTrack Analytics – MVP</title>
   <link rel="stylesheet" href="/static/styles.css" />
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-    crossorigin=""
-  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 </head>
 
 <body>
@@ -462,6 +458,10 @@
                 <input id="mapShowTrajectory" type="checkbox" checked />
                 <span>Zobrazit linii trajektorie</span>
               </label>
+              <label class="map-option-row" for="mapShowEndpoints">
+                <input id="mapShowEndpoints" type="checkbox" checked />
+                <span>Začátek a konec pohybu</span>
+              </label>
             </div>
 
             <div class="map-option-grid">
@@ -484,6 +484,10 @@
               <div class="map-legend-row">
                 <span class="map-legend-line" id="mapLegendLineSwatch"></span>
                 <span>Trajektorie (LineString) – připraveno na budoucí data</span>
+              </div>
+              <div class="map-legend-row">
+                <span class="map-legend-swatch map-legend-swatch-endpoint" id="mapLegendEndpointSwatch"></span>
+                <span>Začátek a konec pohybu</span>
               </div>
             </div>
 
@@ -638,12 +642,9 @@
     </div>
   </div>
 
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-    crossorigin=""
-  ></script>
-  <script src="/static/app.js?v=17"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="/static/app.js?v=19"></script>
 </body>
 
 </html>

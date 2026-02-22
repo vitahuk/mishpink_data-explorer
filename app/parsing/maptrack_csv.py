@@ -108,18 +108,36 @@ def _parse_viewport_size(v: Any) -> Viewport:
     except Exception:
         return Viewport()
 
+COORDINATE_EVENT_NAMES: set[str] = {"movestart", "moveend", "popupopen", "popupclose"}
+COORDINATE_PATTERN = re.compile(
+    r"^\s*(?P<lat>-?\d+(?:\.\d+)?)\s*,\s*(?P<lon>-?\d+(?:\.\d+)?)\s*$"
+)
+
 
 def _parse_lat_lon(s: str) -> Optional[Tuple[float, float]]:
     """
-    očekává "lat, lon"
+    očekává "lat, lon" ve WGS84 a validuje rozsahy.
     """
-    m = re.match(r"^\s*(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)\s*$", s)
+    m = COORDINATE_PATTERN.match(s)
     if not m:
         return None
-    lat = float(m.group(1))
-    lon = float(m.group(3))
+    
+    lat = float(m.group("lat"))
+    lon = float(m.group("lon"))
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return None
     return (lat, lon)
 
+def parse_coordinate_detail_if_allowed(event_name: str, event_detail: Any) -> Optional[Tuple[float, float]]:
+    """
+    Souřadnice parsuje pouze pro explicitně podporované eventy.
+    event_detail je polymorfní, proto pro ostatní eventy vždy vrací None.
+    """
+    if event_name not in COORDINATE_EVENT_NAMES:
+        return None
+    if event_detail is None or (isinstance(event_detail, float) and pd.isna(event_detail)):
+        return None
+    return _parse_lat_lon(str(event_detail))
 
 def parse_event_detail(event_name: str, event_detail: Any) -> Dict[str, Any]:
     """
@@ -135,7 +153,7 @@ def parse_event_detail(event_name: str, event_detail: Any) -> Dict[str, Any]:
 
     s = str(event_detail).strip()
 
-    if event_name in {"movestart", "moveend", "popupopen", "popupclose"}:
+    if event_name in COORDINATE_EVENT_NAMES:
         ll = _parse_lat_lon(s)
         if ll:
             lat, lon = ll
@@ -160,6 +178,101 @@ def _normalize_task_id(v: Any) -> Optional[str]:
         return None
     s = str(v).strip()
     return s if s else None
+
+def build_spatial_trace_for_user(df: pd.DataFrame, user_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Připraví spatial data pro Leaflet pro jednoho uživatele/session.
+    Výstup:
+    {
+      userId: str,
+      track: { points: [[lat, lon], ...] },
+      popups: [{lat, lon, name, timestamp}, ...],
+      movementEndpoints: {start: {lat, lon, timestamp}|null, end: {lat, lon, timestamp}|null}
+    }
+    """
+    required = {"timestamp", "event_name", "event_detail"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns for spatial trace: {sorted(missing)}")
+
+    data = df.copy()
+    uid_col = get_user_id_column(data)
+
+    normalized_user = None if user_id is None else str(user_id).strip()
+    if uid_col and normalized_user:
+        data = data[data[uid_col].astype(str).str.strip() == normalized_user]
+
+    data = data.copy()
+    data["_timestamp"] = pd.to_numeric(data["timestamp"], errors="coerce")
+    data = data[data["_timestamp"].notna()]
+    if data.empty:
+        return {"userId": normalized_user or "", "track": {"points": []}, "popups": [], "movementEndpoints": {"start": None, "end": None}}
+
+    data["_timestamp"] = data["_timestamp"].astype(int)
+    data = data.sort_values(by=["_timestamp"], kind="stable")
+
+    resolved_user_id = normalized_user
+    if not resolved_user_id and uid_col and not data.empty:
+        resolved_user_id = str(data.iloc[0][uid_col]).strip()
+
+    track_points: List[List[float]] = []
+    popups: List[Dict[str, Any]] = []
+    all_coordinate_points: List[Dict[str, Any]] = []
+    last_popup_name: Optional[str] = None
+
+    for _, row in data.iterrows():
+        event_name = str(row.get("event_name", "")).strip()
+        event_detail = row.get("event_detail")
+        timestamp = int(row.get("_timestamp"))
+
+        if event_name == "popupopen:name":
+            if event_detail is None or (isinstance(event_detail, float) and pd.isna(event_detail)):
+                last_popup_name = None
+            else:
+                text = str(event_detail).strip()
+                last_popup_name = text if text else None
+            continue
+
+        coord = parse_coordinate_detail_if_allowed(event_name, event_detail)
+        if coord is not None:
+            lat, lon = coord
+            all_coordinate_points.append({"lat": lat, "lon": lon, "timestamp": timestamp})
+
+        if event_name == "moveend" and coord is not None:
+            lat, lon = coord
+            if track_points:
+                prev_lat, prev_lon = track_points[-1]
+                if abs(lat - prev_lat) < 1e-6 and abs(lon - prev_lon) < 1e-6:
+                    continue
+            track_points.append([lat, lon])
+            continue
+
+        if event_name == "popupopen" and coord is not None:
+            lat, lon = coord
+            popups.append({
+                "lat": lat,
+                "lon": lon,
+                "name": last_popup_name or "—",
+                "timestamp": timestamp,
+            })
+            last_popup_name = None
+
+    if len(track_points) < 2:
+        track_points = []
+    
+    start_point = all_coordinate_points[0] if all_coordinate_points else None
+    end_point = all_coordinate_points[-1] if all_coordinate_points else None
+
+
+    return {
+        "userId": resolved_user_id or "",
+        "track": {"points": track_points},
+        "popups": popups,
+        "movementEndpoints": {
+            "start": start_point,
+            "end": end_point,
+        },
+    }
 
 
 # =========================
