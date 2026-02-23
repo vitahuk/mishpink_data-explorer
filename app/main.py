@@ -7,6 +7,8 @@ from fastapi import Body
 
 from pathlib import Path
 import re
+import unicodedata
+from collections import Counter
 import shutil
 from typing import Any, Dict, Optional, List
 from uuid import uuid4
@@ -109,6 +111,162 @@ def _sanitize_filename_component(value: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", value).strip("_")
     return cleaned or "user"
 
+def _read_csv_flexible(path: Path) -> pd.DataFrame:
+    """
+    Tries common delimiters (comma/tab/auto) to support slightly different CSV exports.
+    """
+    attempts = [
+        {"kwargs": {"low_memory": False}},
+        {"kwargs": {"sep": "	", "low_memory": False}},
+        {"kwargs": {"sep": None, "engine": "python", "low_memory": False}},
+    ]
+
+    for attempt in attempts:
+        try:
+            df = pd.read_csv(path, **attempt["kwargs"])
+        except Exception:
+            continue
+        if {"timestamp", "event_name"}.issubset(set(df.columns)):
+            return df
+
+    # last resort: return default read result (will fail later with clearer message if invalid)
+    return pd.read_csv(path, low_memory=False)
+
+def _normalize_text(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _extract_answers_by_task_from_df(df: pd.DataFrame) -> Dict[str, str]:
+    if df.empty or "event_name" not in df.columns:
+        return {}
+    
+    answer_event_names = {"answer selected", "polygon selected"}
+    confirm_event_names = {"setting task", "completed"}
+
+    if "task" not in df.columns:
+        return {}
+
+    rows = list(df.to_dict("records"))
+    finalized: Dict[str, str] = {}
+    pending: Optional[tuple[str, str]] = None
+
+    for row in rows:
+        event_name_raw = row.get("event_name")
+        if event_name_raw is None or (isinstance(event_name_raw, float) and pd.isna(event_name_raw)):
+            continue
+
+        event_name = str(event_name_raw).strip().lower()
+        if event_name in answer_event_names:
+            task_raw = row.get("task")
+            if task_raw is None or (isinstance(task_raw, float) and pd.isna(task_raw)):
+                continue
+
+            task_id = str(task_raw).strip()
+            if not task_id:
+                continue
+
+            event_detail_raw = row.get("event_detail") if "event_detail" in df.columns else None
+            answer_text = "" if event_detail_raw is None or (isinstance(event_detail_raw, float) and pd.isna(event_detail_raw)) else str(event_detail_raw).strip()
+            if not answer_text:
+                continue
+
+            # keep latest candidate answer until task switch/completion confirms it
+            pending = (task_id, answer_text)
+            continue
+
+        if event_name in confirm_event_names and pending is not None:
+            task_id, answer_text = pending
+            finalized[task_id] = answer_text
+            pending = None
+
+    return finalized
+
+
+def _evaluate_answer(correct_answer: str, user_answer: str) -> bool:
+    if not correct_answer or not user_answer:
+        return False
+    return _normalize_text(correct_answer) == _normalize_text(user_answer)
+
+
+def _build_group_answers_payload(group: Dict[str, Any]) -> Dict[str, Any]:
+    sessions = group.get("sessions", []) if isinstance(group.get("sessions"), list) else []
+    test_id = str(group.get("test_id") or "TEST")
+    answer_key = get_test_answers(test_id)
+
+    by_task: Dict[str, Dict[str, Any]] = {}
+    for session in sessions:
+        user_id = str(session.get("user_id") or "").strip()
+        stats = session.get("stats") if isinstance(session.get("stats"), dict) else {}
+        answers_map = stats.get("answers_by_task") if isinstance(stats.get("answers_by_task"), dict) else {}
+
+        for task_id, answer_text in answers_map.items():
+            task = str(task_id).strip()
+            answer = str(answer_text).strip()
+            if not task or not answer:
+                continue
+
+            correct = answer_key.get(task)
+            record = by_task.setdefault(task, {
+                "task_id": task,
+                "answers": [],
+                "correct_answer": correct,
+                "correct_count": 0,
+                "total_count": 0,
+            })
+            is_correct = _evaluate_answer(correct or "", answer) if isinstance(correct, str) else False
+            record["answers"].append({
+                "user_id": user_id or None,
+                "answer": answer,
+                "is_correct": is_correct,
+            })
+            record["total_count"] += 1
+            if is_correct:
+                record["correct_count"] += 1
+
+    for record in by_task.values():
+        total = record.get("total_count") or 0
+        correct_count = record.get("correct_count") or 0
+        record["accuracy"] = (correct_count / total) if total else None
+
+    return {
+        "group_id": group.get("id"),
+        "test_id": test_id,
+        "tasks": by_task,
+    }
+
+
+def _tokenize_for_wordcloud(value: str) -> List[str]:
+    normalized = _normalize_text(value)
+    if not normalized:
+        return []
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    parts = [p for p in normalized.split() if len(p) >= 2]
+    stopwords = {"a", "i", "v", "ve", "s", "z", "na", "do", "se", "ze", "to", "je", "jsou", "the", "and", "or", "of"}
+    return [p for p in parts if p not in stopwords]
+
+
+def _build_wordcloud_from_group_payload(payload: Dict[str, Any], task_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    tasks = payload.get("tasks", {}) if isinstance(payload.get("tasks"), dict) else {}
+    counter: Counter[str] = Counter()
+
+    for t_id, record in tasks.items():
+        if task_id and t_id != task_id:
+            continue
+        answers = record.get("answers", []) if isinstance(record.get("answers"), list) else []
+        for item in answers:
+            answer = str(item.get("answer") or "").strip()
+            for token in _tokenize_for_wordcloud(answer):
+                counter[token] += 1
+
+    return [{"text": text, "count": count} for text, count in counter.most_common(80)]
+
+
 # =========================
 # API
 # =========================
@@ -149,9 +307,13 @@ async def upload_csv(
         task_metrics = compute_all_task_metrics(parsed_session)
 
         # store all stats in one structure
+        source_df = _read_csv_flexible(dst)
+        answers_by_task = _extract_answers_by_task_from_df(source_df)
+
         stats: Dict[str, Any] = {
             "session": session_metrics,
             "tasks": task_metrics,
+            "answers_by_task": answers_by_task,
         }
 
     except Exception as e:
@@ -240,10 +402,12 @@ async def upload_bulk_csv(
             soc_row = soc_rows.get(str(user_id), {})
             session_metrics = compute_session_metrics(session=parsed_session, raw_row=soc_row)
             task_metrics = compute_all_task_metrics(parsed_session)
+            answers_by_task = _extract_answers_by_task_from_df(df_user)
 
             stats: Dict[str, Any] = {
                 "session": session_metrics,
                 "tasks": task_metrics,
+                "answers": answers_by_task,
             }
 
             session_meta = SessionData(
@@ -435,10 +599,10 @@ def api_put_test_answer(
         updated = set_test_answer(test_id, task_id, None)
         return {"test_id": test_id, "answers": updated}
 
-    if not isinstance(answer, int):
-        raise HTTPException(status_code=400, detail="'answer' must be an integer or null.")
+    if not isinstance(answer, str):
+        raise HTTPException(status_code=400, detail="'answer' must be a string or null.")
 
-    updated = set_test_answer(test_id, task_id, int(answer))
+    updated = set_test_answer(test_id, task_id, answer)
     return {"test_id": test_id, "answers": updated}
 
 
@@ -473,6 +637,85 @@ def api_list_groups(test_id: Optional[str] = None):
         })
 
     return {"groups": out}
+
+@app.get("/api/groups/{group_id}/answers")
+def api_group_answers(group_id: str):
+    group = next((g for g in list_groups() if g.get("id") == group_id), None)
+    if not group:
+        raise HTTPException(status_code=404, detail="Skupina nenalezena.")
+
+    session_ids = group.get("session_ids", []) if isinstance(group.get("session_ids"), list) else []
+    sessions_out = []
+    for sid in session_ids:
+        session = STORE.get(sid)
+        if not session:
+            continue
+
+        stats = session.stats if isinstance(session.stats, dict) else {}
+        answers_by_task = stats.get("answers_by_task") if isinstance(stats.get("answers_by_task"), dict) else {}
+
+        if not answers_by_task:
+            # Backfill for sessions uploaded before answers extraction existed.
+            csv_path = Path(session.file_path)
+            if csv_path.exists():
+                try:
+                    df_session = _read_csv_flexible(csv_path)
+                    answers_by_task = _extract_answers_by_task_from_df(df_session)
+                except Exception:
+                    answers_by_task = {}
+            stats = {**stats, "answers_by_task": answers_by_task}
+            session.stats = stats
+
+        sessions_out.append({
+            "session_id": session.session_id,
+            "user_id": session.user_id,
+            "test_id": getattr(session, "test_id", "TEST") or "TEST",
+            "task": session.task,
+            "tasks": list((stats or {}).get("tasks", {}).keys()),
+            "stats": stats,
+        })
+
+    payload = _build_group_answers_payload({**group, "sessions": sessions_out})
+    return payload
+
+
+@app.get("/api/groups/{group_id}/wordcloud")
+def api_group_wordcloud(group_id: str, task_id: Optional[str] = None):
+    answers_payload = api_group_answers(group_id)
+    words = _build_wordcloud_from_group_payload(answers_payload, task_id=task_id)
+    return {
+        "group_id": group_id,
+        "task_id": task_id,
+        "words": words,
+    }
+
+
+@app.post("/api/groups/compare/wordcloud")
+def api_compare_wordcloud(payload: dict = Body(...)):
+    group_ids = payload.get("group_ids", [])
+    task_id = payload.get("task_id")
+    if not isinstance(group_ids, list) or not group_ids:
+        raise HTTPException(status_code=400, detail="group_ids must be non-empty list")
+
+    out_groups = []
+    for gid in group_ids:
+        gid_str = str(gid).strip()
+        if not gid_str:
+            continue
+        try:
+            answers_payload = api_group_answers(gid_str)
+        except HTTPException:
+            continue
+        words = _build_wordcloud_from_group_payload(answers_payload, task_id=str(task_id).strip() if isinstance(task_id, str) and task_id.strip() else None)
+        out_groups.append({
+            "group_id": gid_str,
+            "words": words,
+        })
+
+    return {
+        "task_id": task_id if isinstance(task_id, str) and task_id.strip() else None,
+        "groups": out_groups,
+    }
 
 
 @app.post("/api/groups")

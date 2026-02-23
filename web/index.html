@@ -274,7 +274,7 @@
               <div class="placeholder-box hidden" id="groupCountsStatsPanel"></div>
               <div class="placeholder-box hidden" id="groupAnswersPanel">
                 <div class="title">Vyhodnocení správnosti odpovědí</div>
-                <div class="muted small">Placeholder – připravíme v další iteraci.</div>
+                 <div class="muted small">Načítání textových odpovědí a wordcloudu…</div>
               </div>
               <div class="placeholder-box hidden" id="groupSocioPanel"></div>
             </div>
@@ -675,6 +675,7 @@
           <button class="tab-btn is-active" type="button" role="tab" data-tab="summary">Tabulka</button>
           <button class="tab-btn" type="button" role="tab" data-tab="chart">Graf (připravujeme)</button>
           <button class="tab-btn" type="button" role="tab" data-tab="task">Srovnání na úrovni úloh</button>
+          <button class="tab-btn" type="button" role="tab" data-tab="wordcloud">Wordcloudy</button>
         </div>
 
         <section class="tab-panel" data-panel="summary">
@@ -702,6 +703,9 @@
             <div id="groupTaskCompareTableWrap"></div>
           </div>
         </section>
+        <section class="tab-panel hidden" data-panel="wordcloud">
+          <div id="groupsCompareWordcloudWrap"></div>
+        </section>
       </div>
       <div class="modal-foot">
         <button class="btn btn-ghost" id="closeGroupsCompareBtn2" type="button">Zavřít</button>
@@ -711,7 +715,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="/static/app.js?v=20"></script>
+  <script src="/static/app.js?v=21"></script>
 </body>
 
 </html>

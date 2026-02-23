@@ -95,7 +95,7 @@ const state = {
     nationality: "",
     userIdQuery: "",
   },
-  // answers cache: testId -> { taskId -> int }
+  // answers cache: testId -> { taskId -> text }
   correctAnswers: {},
   map: {
     leafletMap: null,
@@ -293,6 +293,29 @@ async function apiUpdateGroup(groupId, payload) {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let err = {};
+    try { err = await res.json(); } catch { }
+    throw new Error(err.detail ?? res.statusText);
+  }
+  return res.json();
+}
+
+async function apiGetGroupAnswers(groupId) {
+  return apiGet(`/api/groups/${encodeURIComponent(groupId)}/answers`);
+}
+
+async function apiGetGroupWordcloud(groupId, taskId = null) {
+  const q = taskId ? `?task_id=${encodeURIComponent(taskId)}` : "";
+  return apiGet(`/api/groups/${encodeURIComponent(groupId)}/wordcloud${q}`);
+}
+
+async function apiCompareWordcloud(groupIds, taskId = null) {
+  const res = await fetch(`/api/groups/compare/wordcloud`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ group_ids: groupIds, task_id: taskId }),
   });
   if (!res.ok) {
     let err = {};
@@ -723,18 +746,18 @@ function getCorrectAnswerLocal(testId, taskId) {
   return state.correctAnswers?.[testId]?.[taskId];
 }
 
-async function setCorrectAnswerPersisted(testId, taskId, answerIntOrNull) {
+async function setCorrectAnswerPersisted(testId, taskId, answerTextOrNull) {
   // optimistic update
   if (!state.correctAnswers[testId]) state.correctAnswers[testId] = {};
-  if (answerIntOrNull === null) {
+  if (answerTextOrNull === null) {
     delete state.correctAnswers[testId][taskId];
   } else {
-    state.correctAnswers[testId][taskId] = answerIntOrNull;
+    state.correctAnswers[testId][taskId] = answerTextOrNull;
   }
 
   try {
     renderSettingsStatus("Ukládám…");
-    await apiPutTestAnswer(testId, taskId, answerIntOrNull);
+    await apiPutTestAnswer(testId, taskId, answerTextOrNull);
     renderSettingsStatus("Uloženo.");
   } catch (e) {
     renderSettingsStatus(`Chyba uložení: ${e?.message ?? e}`);
@@ -771,15 +794,14 @@ function renderSettingsPage() {
         <div class="row" style="align-items:center; justify-content:space-between; gap:12px;">
           <div>
             <div class="title">${escapeHtml(taskId)}</div>
-            <div class="muted small">Správná odpověď (integer)</div>
+            <div class="muted small">Správná odpověď (text)</div>
           </div>
 
           <input
-            type="number"
-            inputmode="numeric"
-            step="1"
+            type="text"
+            inputmode="text"
             value="${escapeHtml(valueAttr)}"
-            placeholder="např. 3"
+            placeholder="např. Praha"
             style="width:140px;"
           />
         </div>
@@ -794,22 +816,15 @@ function renderSettingsPage() {
     if (!input) return;
 
     input.addEventListener("change", async () => {
-      const raw = input.value;
+      const raw = String(input.value ?? "").trim();
 
       if (raw === "") {
         await setCorrectAnswerPersisted(testId, taskId, null);
         return;
       }
 
-      const n = Number(raw);
-      if (!Number.isInteger(n)) {
-        const fixed = Math.trunc(n);
-        input.value = String(fixed);
-        await setCorrectAnswerPersisted(testId, taskId, fixed);
-        return;
-      }
-
-      await setCorrectAnswerPersisted(testId, taskId, n);
+      input.value = raw;
+      await setCorrectAnswerPersisted(testId, taskId, raw);
     });
   });
 }
@@ -2333,6 +2348,121 @@ function renderGroupSocioStats(group) {
   `;
 }
 
+function renderMiniWordcloud(words = []) {
+  if (!Array.isArray(words) || !words.length) {
+    return `<div class="muted small">Zatím nejsou dostupná textová data odpovědí.</div>`;
+  }
+  const max = Math.max(...words.map((w) => Number(w.count) || 1), 1);
+  return `<div class="wordcloud">${words.slice(0, 60).map((w) => {
+    const count = Number(w.count) || 1;
+    const ratio = count / max;
+    const size = 12 + Math.round(ratio * 22);
+    return `<span class="word" style="font-size:${size}px" title="${escapeHtml(String(count))}">${escapeHtml(w.text)}</span>`;
+  }).join(" ")}</div>`;
+}
+
+async function renderGroupAnswersAndWordcloud(group) {
+  const panel = $("#groupAnswersPanel");
+  if (!panel) return;
+  if (!group?.id) {
+    panel.innerHTML = `<div class="title">Vyhodnocení odpovědí</div><div class="muted small">Vyber skupinu.</div>`;
+    return;
+  }
+
+  panel.innerHTML = `<div class="title">Vyhodnocení odpovědí</div><div class="muted small">Načítám…</div>`;
+
+  try {
+    const answersPayload = await apiGetGroupAnswers(group.id);
+    const tasks = Object.keys(answersPayload?.tasks ?? {}).sort((a, b) => a.localeCompare(b));
+    const selectedTask = tasks[0] ?? null;
+    const wordcloud = await apiGetGroupWordcloud(group.id, selectedTask);
+
+    const selector = tasks.length
+      ? `<label class="filter-field" style="max-width:320px;"><span>Úloha</span><select id="groupWordcloudTaskSelect">${tasks.map((taskId) => `<option value="${escapeHtml(taskId)}" ${taskId===selectedTask?"selected":""}>${escapeHtml(taskId)}</option>`).join("")}</select></label>`
+      : `<div class="muted small">Skupina zatím nemá odpovědi navázané na úlohy.</div>`;
+
+    const taskRecord = selectedTask ? answersPayload?.tasks?.[selectedTask] : null;
+    const acc = taskRecord?.accuracy;
+    const summary = taskRecord
+      ? `Správně: ${taskRecord.correct_count}/${taskRecord.total_count}${Number.isFinite(acc) ? ` (${(acc*100).toFixed(1)} %)` : ""}`
+      : "Bez odpovědí pro vybranou úlohu.";
+
+    panel.innerHTML = `
+      <div class="row" style="justify-content:space-between; align-items:end; gap:10px; flex-wrap:wrap;">
+        <div>
+          <div class="title">Vyhodnocení odpovědí + wordcloud</div>
+          <div class="muted small">${escapeHtml(summary)}</div>
+        </div>
+        ${selector}
+      </div>
+      <div class="wordcloud-wrap" id="groupWordcloudWrap">${renderMiniWordcloud(wordcloud?.words ?? [])}</div>
+    `;
+
+    const select = $("#groupWordcloudTaskSelect");
+    select?.addEventListener("change", async () => {
+      const t = select.value || null;
+      const cloud = await apiGetGroupWordcloud(group.id, t);
+      const wrap = $("#groupWordcloudWrap");
+      if (wrap) wrap.innerHTML = renderMiniWordcloud(cloud?.words ?? []);
+    });
+  } catch (e) {
+    panel.innerHTML = `<div class="title">Vyhodnocení odpovědí</div><div class="muted small">Chyba načtení: ${escapeHtml(e?.message ?? e)}</div>`;
+  }
+}
+
+function renderGroupCompareWordcloudTab(groups) {
+  const wrap = $("#groupsCompareWordcloudWrap");
+  if (!wrap) return;
+  if (!groups.length) {
+    wrap.innerHTML = `<div class="empty"><div class="empty-title">Nejsou vybrané skupiny</div></div>`;
+    return;
+  }
+
+  const allTasks = getAllTaskIdsForGroups(groups);
+  if (!state.selectedGroupCompareTaskId || !allTasks.includes(state.selectedGroupCompareTaskId)) {
+    state.selectedGroupCompareTaskId = allTasks[0] ?? null;
+  }
+
+  const options = allTasks.map((taskId) => `<option value="${escapeHtml(taskId)}" ${taskId===state.selectedGroupCompareTaskId?"selected":""}>${escapeHtml(taskId)}</option>`).join("");
+  wrap.innerHTML = `
+    <div class="row" style="justify-content:space-between; align-items:end; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+      <div class="muted small">Wordcloudy podle skupin pro stejnou úlohu.</div>
+      <label class="filter-field" style="max-width:320px; margin:0;">
+        <span>Úloha</span>
+        <select id="groupsCompareWordcloudTaskSelect">${options}</select>
+      </label>
+    </div>
+    <div class="wordcloud-grid" id="groupsCompareWordcloudGrid"><div class="muted small">Načítám…</div></div>
+  `;
+
+  const load = async () => {
+    const taskId = $("#groupsCompareWordcloudTaskSelect")?.value || null;
+    const res = await apiCompareWordcloud(groups.map((g) => g.id), taskId);
+    const grid = $("#groupsCompareWordcloudGrid");
+    if (!grid) return;
+    const byId = new Map((res?.groups ?? []).map((g) => [g.group_id, g.words ?? []]));
+    grid.innerHTML = groups.map((group) => `
+      <div class="card" style="padding:10px;">
+        <div class="title">${escapeHtml(group.name ?? group.id)}</div>
+        <div class="muted small" style="margin-bottom:6px;">${escapeHtml(group.id)}</div>
+        ${renderMiniWordcloud(byId.get(group.id) ?? [])}
+      </div>
+    `).join("");
+  };
+
+  load().catch((e) => {
+    const grid = $("#groupsCompareWordcloudGrid");
+    if (grid) grid.innerHTML = `<div class="muted small">Chyba načtení: ${escapeHtml(e?.message ?? e)}</div>`;
+  });
+
+  $("#groupsCompareWordcloudTaskSelect")?.addEventListener("change", () => {
+    load().catch((e) => {
+      const grid = $("#groupsCompareWordcloudGrid");
+      if (grid) grid.innerHTML = `<div class="muted small">Chyba načtení: ${escapeHtml(e?.message ?? e)}</div>`;
+    });
+  });
+}
+
 function renderGroupsPage() {
   const groupsListEl = $("#groupsList");
   const usersListEl = $("#groupUsersList");
@@ -2457,6 +2587,7 @@ function renderGroupsPage() {
   }
 
   if (answersPanelEl) answersPanelEl.classList.remove("hidden");
+  renderGroupAnswersAndWordcloud(group);
   renderGroupTimeStats(group);
   renderGroupCountsStats(group);
   renderGroupSocioStats(group);
@@ -2750,6 +2881,7 @@ function renderGroupCompareModal() {
 
   renderGroupCompareSummaryTab(groups);
   renderGroupCompareTaskTab(groups);
+  renderGroupCompareWordcloudTab(groups);
 }
 
 function openGroupCompareModal() {

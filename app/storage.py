@@ -62,9 +62,9 @@ def ensure_upload_dir() -> Path:
 # Test answers persistence
 # =========================
 
-def _read_test_answers_file() -> Dict[str, Dict[str, int]]:
+def _read_test_answers_file() -> Dict[str, Dict[str, str]]:
     """
-    Returns structure: { test_id: { task_id: int } }
+    Returns structure: { test_id: { task_id: str } }
     Robust against missing file / invalid JSON.
     """
     if not TEST_ANSWERS_FILE.exists():
@@ -78,7 +78,7 @@ def _read_test_answers_file() -> Dict[str, Dict[str, int]]:
     if not isinstance(raw, dict):
         return {}
 
-    out: Dict[str, Dict[str, int]] = {}
+    out: Dict[str, Dict[str, str]] = {}
     for test_id, answers in raw.items():
         if not isinstance(test_id, str):
             continue
@@ -86,12 +86,17 @@ def _read_test_answers_file() -> Dict[str, Dict[str, int]]:
             continue
         out[test_id] = {}
         for task_id, val in answers.items():
-            if isinstance(task_id, str) and isinstance(val, int):
-                out[test_id][task_id] = val
+            if not isinstance(task_id, str):
+                continue
+            if val is None:
+                continue
+            normalized_val = str(val).strip()
+            if normalized_val:
+                out[test_id][task_id] = normalized_val
     return out
 
 
-def _write_test_answers_file(data: Dict[str, Dict[str, int]]) -> None:
+def _write_test_answers_file(data: Dict[str, Dict[str, str]]) -> None:
     TEST_ANSWERS_FILE.parent.mkdir(parents=True, exist_ok=True)
     TEST_ANSWERS_FILE.write_text(
         json.dumps(data, ensure_ascii=False, indent=2),
@@ -99,9 +104,9 @@ def _write_test_answers_file(data: Dict[str, Dict[str, int]]) -> None:
     )
 
 
-def get_test_answers(test_id: str) -> Dict[str, int]:
+def get_test_answers(test_id: str) -> Dict[str, str]:
     """
-    Get answers for one test: { task_id: int }
+    Get answers for one test: { task_id: str }
     """
     with _TEST_ANSWERS_LOCK:
         all_answers = _read_test_answers_file()
@@ -109,7 +114,7 @@ def get_test_answers(test_id: str) -> Dict[str, int]:
         return dict(answers) if isinstance(answers, dict) else {}
 
 
-def set_test_answer(test_id: str, task_id: str, answer: Optional[int]) -> Dict[str, int]:
+def set_test_answer(test_id: str, task_id: str, answer: Optional[str]) -> Dict[str, str]:
     """
     Set or delete answer for (test_id, task_id).
     If answer is None => delete key.
@@ -129,8 +134,11 @@ def set_test_answer(test_id: str, task_id: str, answer: Optional[int]) -> Dict[s
         if answer is None:
             all_answers[test_id].pop(task_id, None)
         else:
-            # ensure int
-            all_answers[test_id][task_id] = int(answer)
+            normalized_answer = str(answer).strip()
+            if not normalized_answer:
+                all_answers[test_id].pop(task_id, None)
+            else:
+                all_answers[test_id][task_id] = normalized_answer
 
         _write_test_answers_file(all_answers)
         return dict(all_answers[test_id])

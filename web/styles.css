@@ -734,3 +734,29 @@ p {
     min-height: 52vh;
   }
 }
+
+.wordcloud-wrap {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 12px;
+  background: rgba(255,255,255,.02);
+}
+
+.wordcloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  line-height: 1.2;
+}
+
+.wordcloud .word {
+  color: #cfe1ff;
+  font-weight: 700;
+}
+
+.wordcloud-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
