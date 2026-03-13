@@ -103,6 +103,17 @@ const state = {
   },
   // answers cache: testId -> { taskId -> text }
   correctAnswers: {},
+  settingsTab: "answers",
+  settingsSessionSelection: [],
+  settingsSessionFilters: {
+    gender: "",
+    ageMin: "",
+    ageMax: "",
+    occupation: "",
+    nationality: "",
+    userIdQuery: "",
+  },
+  settingsDeleteTarget: null,
   map: {
     leafletMap: null,
     baseLayers: null,
@@ -263,6 +274,30 @@ async function apiPutTestAnswer(testId, taskName, answerOrNull) {
     }
   );
 
+  if (!res.ok) {
+    let err = {};
+    try { err = await res.json(); } catch { }
+    throw new Error(err.detail ?? res.statusText);
+  }
+  return res.json();
+}
+
+async function apiDeleteSessions(testId, sessionIds) {
+  const res = await fetch(`/api/tests/${encodeURIComponent(testId)}/sessions`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_ids: sessionIds }),
+  });
+  if (!res.ok) {
+    let err = {};
+    try { err = await res.json(); } catch { }
+    throw new Error(err.detail ?? res.statusText);
+  }
+  return res.json();
+}
+
+async function apiDeleteAllSessions(testId) {
+  const res = await fetch(`/api/tests/${encodeURIComponent(testId)}/sessions/all`, { method: "DELETE" });
   if (!res.ok) {
     let err = {};
     try { err = await res.json(); } catch { }
@@ -776,69 +811,239 @@ async function setCorrectAnswerPersisted(testId, taskId, answerTextOrNull) {
   }
 }
 
+function renderSettingsSessionFilterControls() {
+  const genderEl = $("#settingsSessionFilterGender");
+  const occupationEl = $("#settingsSessionFilterOccupation");
+  const nationalityEl = $("#settingsSessionFilterNationality");
+  const ageMinEl = $("#settingsSessionFilterAgeMin");
+  const ageMaxEl = $("#settingsSessionFilterAgeMax");
+  const userIdEl = $("#settingsSessionFilterUserId");
+  if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !userIdEl) return;
+
+  const options = getSessionFilterOptions(getSessionsForSelectedTest());
+  const makeOptions = (values, emptyLabel) => {
+    const base = [`<option value="">${escapeHtml(emptyLabel)}</option>`];
+    return base.concat(values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`));
+  };
+
+  genderEl.innerHTML = makeOptions(options.gender, "Vše");
+  occupationEl.innerHTML = makeOptions(options.occupation, "Vše");
+  nationalityEl.innerHTML = makeOptions(options.nationality, "Vše");
+
+  genderEl.value = state.settingsSessionFilters.gender;
+  occupationEl.value = state.settingsSessionFilters.occupation;
+  nationalityEl.value = state.settingsSessionFilters.nationality;
+  ageMinEl.value = state.settingsSessionFilters.ageMin;
+  ageMaxEl.value = state.settingsSessionFilters.ageMax;
+  userIdEl.value = state.settingsSessionFilters.userIdQuery;
+}
+
+function applySettingsSessionFilters(sessions) {
+  return applyGenericSessionFilters(sessions, {
+    gender: state.settingsSessionFilters.gender,
+    occupation: state.settingsSessionFilters.occupation,
+    nationality: state.settingsSessionFilters.nationality,
+    ageMin: state.settingsSessionFilters.ageMin,
+    ageMax: state.settingsSessionFilters.ageMax,
+    query: state.settingsSessionFilters.userIdQuery,
+  });
+}
+
+function renderSettingsSessionsTab() {
+  const listEl = $("#settingsSessionsList");
+  const summaryEl = $("#settingsSessionFilterSummary");
+  const statusEl = $("#settingsSessionStatus");
+  if (!listEl) return;
+
+  const sessions = getSessionsForSelectedTest();
+  renderSettingsSessionFilterControls();
+
+  const validSet = new Set(sessions.map((s) => s.session_id));
+  state.settingsSessionSelection = (state.settingsSessionSelection ?? []).filter((sid) => validSet.has(sid));
+
+  const filtered = applySettingsSessionFilters(sessions);
+  const selectedSet = new Set(state.settingsSessionSelection);
+
+  if (summaryEl) summaryEl.textContent = `Zobrazeno ${filtered.length} z ${sessions.length} · Vybráno ${selectedSet.size}`;
+  if (statusEl && !statusEl.textContent) statusEl.textContent = "—";
+
+  if (!sessions.length) {
+    listEl.innerHTML = `<div class="empty"><div class="empty-title">V tomto testu zatím nejsou sessions</div></div>`;
+    return;
+  }
+
+  if (!filtered.length) {
+    listEl.innerHTML = `<div class="empty"><div class="empty-title">Žádná session neodpovídá filtru</div></div>`;
+    return;
+  }
+  listEl.innerHTML = filtered.map((s) => {
+    const checked = selectedSet.has(s.session_id) ? "checked" : "";
+    return `
+      <label class="list-item" style="cursor:default;">
+        <div class="row" style="justify-content:flex-start; gap:10px;">
+          <input type="checkbox" data-role="settings-session" data-session="${escapeHtml(s.session_id)}" ${checked} />
+          <div>
+            <div class="title">${escapeHtml(s.user_id ?? "—")}</div>
+            <div class="muted small">session: ${escapeHtml(s.session_id)} · task: ${escapeHtml((s.tasks && s.tasks[0]) || s.task || "—")}</div>
+          </div>
+        </div>
+      </label>
+    `;
+  }).join("");
+
+  $$("#settingsSessionsList input[data-role='settings-session']").forEach((input) => {
+    input.addEventListener("change", () => {
+      const sid = input.dataset.session;
+      if (!sid) return;
+      const set = new Set(state.settingsSessionSelection ?? []);
+      if (input.checked) set.add(sid);
+      else set.delete(sid);
+      state.settingsSessionSelection = Array.from(set);
+      renderSettingsSessionsTab();
+    });
+  });
+}
+
 function renderSettingsPage() {
   const testId = state.selectedTestId ?? "TEST";
 
   const nameEl = $("#settingsTestName");
   if (nameEl) nameEl.textContent = testId;
 
+  const tabs = $$("#settingsTabs .tab-btn");
+  tabs.forEach((btn) => {
+    const active = btn.dataset.tab === state.settingsTab;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+
+
+  $$("#view-settings .tab-panel").forEach((panel) => {
+    const key = panel.dataset.panel;
+    panel.classList.toggle("hidden", key !== state.settingsTab);
+  });
+
   const listEl = $("#settingsTasksList");
-  if (!listEl) return;
+  if (listEl) {
+    const tasks = getAllTasksForSelectedTest();
 
-  const tasks = getAllTasksForSelectedTest();
+    if (!tasks.length) {
+      listEl.innerHTML = `
+        <div class="empty">
+          <div class="empty-title">Zatím žádné úlohy</div>
+          <div class="muted small">Nahraj aspoň jednu session (CSV), aby se načetly názvy úloh.</div>
+        </div>
+      `;
+    } else {
+      listEl.innerHTML = tasks.map((taskId) => {
+        const val = getCorrectAnswerLocal(testId, taskId);
+        const valueAttr = (val === null || val === undefined) ? "" : String(val);
 
-  if (!tasks.length) {
-    listEl.innerHTML = `
-      <div class="empty">
-        <div class="empty-title">Zatím žádné úlohy</div>
-        <div class="muted small">Nahraj aspoň jednu session (CSV), aby se načetly názvy úloh.</div>
-      </div>
-    `;
+        return `
+          <div class="list-item" data-task="${escapeHtml(taskId)}">
+            <div class="row" style="align-items:center; justify-content:space-between; gap:12px;">
+              <div>
+                <div class="title">${escapeHtml(taskId)}</div>
+                <div class="muted small">Správná odpověď (text)</div>
+              </div>
+
+              <input
+                type="text"
+                inputmode="text"
+                value="${escapeHtml(valueAttr)}"
+                placeholder="např. Praha"
+                style="width:140px;"
+              />
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      $$("#settingsTasksList .list-item").forEach((item) => {
+        const taskId = item.dataset.task;
+        const input = item.querySelector("input");
+        if (!input) return;
+
+        input.addEventListener("change", async () => {
+          const raw = String(input.value ?? "").trim();
+
+          if (raw === "") {
+            await setCorrectAnswerPersisted(testId, taskId, null);
+            return;
+          }
+
+          input.value = raw;
+          await setCorrectAnswerPersisted(testId, taskId, raw);
+        });
+      });
+    }
+  }
+
+  renderSettingsSessionsTab();
+}
+
+function openSettingsDeleteConfirmModal(mode) {
+  const sessions = getSessionsForSelectedTest();
+  const filtered = applySettingsSessionFilters(sessions);
+  const selectedIds = (state.settingsSessionSelection ?? []).filter((sid) => sessions.some((s) => s.session_id === sid));
+
+  let count = 0;
+  if (mode === "all") count = sessions.length;
+  else count = selectedIds.length;
+
+  if (!count) {
+    const statusEl = $("#settingsSessionStatus");
+    if (statusEl) statusEl.textContent = mode === "all" ? "V testu nejsou žádné sessions ke smazání." : "Vyber nejprve aspoň jednu session.";
     return;
   }
 
-  listEl.innerHTML = tasks.map((taskId) => {
-    const val = getCorrectAnswerLocal(testId, taskId);
-    const valueAttr = (val === null || val === undefined) ? "" : String(val);
+  state.settingsDeleteTarget = {
+    mode,
+    sessionIds: mode === "all" ? sessions.map((s) => s.session_id) : selectedIds,
+    count,
+    filteredCount: filtered.length,
+  };
 
-    return `
-      <div class="list-item" data-task="${escapeHtml(taskId)}">
-        <div class="row" style="align-items:center; justify-content:space-between; gap:12px;">
-          <div>
-            <div class="title">${escapeHtml(taskId)}</div>
-            <div class="muted small">Správná odpověď (text)</div>
-          </div>
+  const textEl = $("#settingsDeleteConfirmText");
+  if (textEl) {
+    textEl.textContent = `Chystáte se smazat ${count} sessions. Tímto dojde k jejich odstranění z databáze. Opravdu si přejete pokračovat?`;
+  }
+  show($("#settingsDeleteConfirmModal"));
+}
 
-          <input
-            type="text"
-            inputmode="text"
-            value="${escapeHtml(valueAttr)}"
-            placeholder="např. Praha"
-            style="width:140px;"
-          />
-        </div>
-      </div>
-    `;
-  }).join("");
+function closeSettingsDeleteConfirmModal() {
+  state.settingsDeleteTarget = null;
+  hide($("#settingsDeleteConfirmModal"));
+}
 
-  // listeners na inputy
-  $$("#settingsTasksList .list-item").forEach((item) => {
-    const taskId = item.dataset.task;
-    const input = item.querySelector("input");
-    if (!input) return;
+async function confirmDeleteSettingsSessions() {
+  const target = state.settingsDeleteTarget;
+  if (!target) return;
 
-    input.addEventListener("change", async () => {
-      const raw = String(input.value ?? "").trim();
+  const testId = state.selectedTestId ?? "TEST";
+  const statusEl = $("#settingsSessionStatus");
 
-      if (raw === "") {
-        await setCorrectAnswerPersisted(testId, taskId, null);
-        return;
-      }
+  try {
+    if (statusEl) statusEl.textContent = "Mazání session…";
+    if (target.mode === "all") {
+      await apiDeleteAllSessions(testId);
+    } else {
+      await apiDeleteSessions(testId, target.sessionIds ?? []);
+    }
 
-      input.value = raw;
-      await setCorrectAnswerPersisted(testId, taskId, raw);
-    });
-  });
+    await refreshSessions();
+    await refreshGroups();
+    renderSettingsPage();
+    renderSessionsList();
+    renderTestAggMetrics();
+
+    state.settingsSessionSelection = [];
+    if (statusEl) statusEl.textContent = `Smazáno: ${target.count} sessions.`;
+  } catch (e) {
+    if (statusEl) statusEl.textContent = `Chyba mazání: ${e?.message ?? e}`;
+  } finally {
+    closeSettingsDeleteConfirmModal();
+  }
 }
 
 // ===== Tasks page =====
@@ -3110,6 +3315,21 @@ function wireNavButtons() {
     renderSettingsPage();
   });
 
+  $("#settingsTabs")?.addEventListener("click", (e) => {
+    const btn = e.target?.closest?.("[data-tab]");
+    if (!btn) return;
+    state.settingsTab = btn.dataset.tab === "sessions" ? "sessions" : "answers";
+    renderSettingsPage();
+  });
+
+  $("#settingsDeleteSelectedBtn")?.addEventListener("click", () => {
+    openSettingsDeleteConfirmModal("selected");
+  });
+
+  $("#settingsDeleteAllBtn")?.addEventListener("click", () => {
+    openSettingsDeleteConfirmModal("all");
+  });
+
   $("#groupsCompareTabs")?.addEventListener("click", (e) => {
     const btn = e.target?.closest?.("[data-tab]");
     if (!btn) return;
@@ -3211,6 +3431,11 @@ function wireModal() {
   $("#closeGroupsCompareBtn2")?.addEventListener("click", closeGroupCompareModal);
   $("#groupsCompareBackdrop")?.addEventListener("click", closeGroupCompareModal);
 
+  $("#settingsDeleteConfirmCloseBtn")?.addEventListener("click", closeSettingsDeleteConfirmModal);
+  $("#settingsDeleteConfirmCancelBtn")?.addEventListener("click", closeSettingsDeleteConfirmModal);
+  $("#settingsDeleteConfirmBackdrop")?.addEventListener("click", closeSettingsDeleteConfirmModal);
+  $("#settingsDeleteConfirmOkBtn")?.addEventListener("click", confirmDeleteSettingsSessions);
+
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       const modal1 = $("#taskMetricsModal");
@@ -3234,6 +3459,9 @@ function wireModal() {
 
       const modal6 = $("#groupsCompareModal");
       if (modal6 && !modal6.classList.contains("hidden")) closeGroupCompareModal();
+
+      const modal7 = $("#settingsDeleteConfirmModal");
+      if (modal7 && !modal7.classList.contains("hidden")) closeSettingsDeleteConfirmModal();
     }
   });
 }
@@ -3444,6 +3672,63 @@ if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !u
   });
 }
 
+function wireSettingsSessionFilters() {
+  const genderEl = $("#settingsSessionFilterGender");
+  const occupationEl = $("#settingsSessionFilterOccupation");
+  const nationalityEl = $("#settingsSessionFilterNationality");
+  const ageMinEl = $("#settingsSessionFilterAgeMin");
+  const ageMaxEl = $("#settingsSessionFilterAgeMax");
+  const userIdEl = $("#settingsSessionFilterUserId");
+  const clearBtn = $("#settingsClearFiltersBtn");
+  const selectAllBtn = $("#settingsSelectAllFilteredBtn");
+  const clearSelectionBtn = $("#settingsClearSelectionBtn");
+
+  if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !userIdEl || !clearBtn || !selectAllBtn || !clearSelectionBtn) return;
+
+  const updateAndRender = () => {
+    state.settingsSessionFilters.gender = genderEl.value;
+    state.settingsSessionFilters.occupation = occupationEl.value;
+    state.settingsSessionFilters.nationality = nationalityEl.value;
+    state.settingsSessionFilters.ageMin = ageMinEl.value;
+    state.settingsSessionFilters.ageMax = ageMaxEl.value;
+    state.settingsSessionFilters.userIdQuery = userIdEl.value;
+    renderSettingsSessionsTab();
+  };
+
+  genderEl.addEventListener("change", updateAndRender);
+  occupationEl.addEventListener("change", updateAndRender);
+  nationalityEl.addEventListener("change", updateAndRender);
+  ageMinEl.addEventListener("input", updateAndRender);
+  ageMaxEl.addEventListener("input", updateAndRender);
+  userIdEl.addEventListener("input", updateAndRender);
+
+  selectAllBtn.addEventListener("click", () => {
+    const sessions = getSessionsForSelectedTest();
+    const filtered = applySettingsSessionFilters(sessions);
+    const selected = new Set(state.settingsSessionSelection ?? []);
+    filtered.forEach((session) => selected.add(session.session_id));
+    state.settingsSessionSelection = Array.from(selected);
+    renderSettingsSessionsTab();
+  });
+
+  clearSelectionBtn.addEventListener("click", () => {
+    state.settingsSessionSelection = [];
+    renderSettingsSessionsTab();
+  });
+
+  clearBtn.addEventListener("click", () => {
+    state.settingsSessionFilters = {
+      gender: "",
+      ageMin: "",
+      ageMax: "",
+      occupation: "",
+      nationality: "",
+      userIdQuery: "",
+    };
+    renderSettingsSessionsTab();
+  });
+}
+
 // ===== Init =====
 async function init() {
   wireNavButtons();
@@ -3453,6 +3738,7 @@ async function init() {
   wireUpload();
   wireBulkUpload();
   wireSessionFilters();
+  wireSettingsSessionFilters();
   wireGroupEditFilters();
 
   state.tests = loadTestsFromStorage();

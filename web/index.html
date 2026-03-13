@@ -115,26 +115,87 @@
         </div>
 
         <section class="card">
-          <div class="card-head">
-            <h2>Správné odpovědi úloh</h2>
-            <div class="muted small">
-              Ke každé úloze zadej správnou odpověď (integer). Ukládá se automaticky.
-            </div>
+          <div class="tab-row" id="settingsTabs" role="tablist" aria-label="Nastavení testu">
+            <button class="tab-btn is-active" type="button" role="tab" data-tab="answers" aria-selected="true">Správné odpovědi</button>
+            <button class="tab-btn" type="button" role="tab" data-tab="sessions" aria-selected="false">Editace nahraných session</button>
           </div>
+
+          <section class="tab-panel" data-panel="answers">
+            <div class="card-head">
+              <h2>Správné odpovědi úloh</h2>
+              <div class="muted small">
+                Ke každé úloze zadej správnou odpověď (text). Ukládá se automaticky.
+              </div>
+            </div>
 
           <div class="list" id="settingsTasksList">
-            <div class="empty">
-              <div class="empty-title">Zatím žádné úlohy</div>
-              <div class="muted small">Nahraj aspoň jednu session (CSV), aby se načetly názvy úloh.</div>
+              <div class="empty">
+                <div class="empty-title">Zatím žádné úlohy</div>
+                <div class="muted small">Nahraj aspoň jednu session (CSV), aby se načetly názvy úloh.</div>
+              </div>
             </div>
-          </div>
 
-          <div class="card-foot foot-split">
-            <div class="muted small" id="settingsStatus">—</div>
-            <button class="btn btn-ghost" id="settingsReloadBtn" type="button">Obnovit</button>
-          </div>
+            <div class="card-foot foot-split">
+              <div class="muted small" id="settingsStatus">—</div>
+              <button class="btn btn-ghost" id="settingsReloadBtn" type="button">Obnovit</button>
+            </div>
+          </section>
+
+          <section class="tab-panel hidden" data-panel="sessions">
+            <div class="card-head">
+              <h2>Editace nahraných session</h2>
+              <div class="muted small">Vyber sessions, které chceš odstranit z databáze.</div>
+              <div class="filter-panel">
+                <div class="filter-grid">
+                  <label class="filter-field"><span>Pohlaví</span><select id="settingsSessionFilterGender"></select></label>
+                  <label class="filter-field"><span>Věk od</span><input id="settingsSessionFilterAgeMin" type="number" inputmode="numeric" min="0" /></label>
+                  <label class="filter-field"><span>Věk do</span><input id="settingsSessionFilterAgeMax" type="number" inputmode="numeric" min="0" /></label>
+                  <label class="filter-field"><span>Povolání</span><select id="settingsSessionFilterOccupation"></select></label>
+                  <label class="filter-field"><span>Národnost</span><select id="settingsSessionFilterNationality"></select></label>
+                  <label class="filter-field"><span>Hledat user/session</span><input id="settingsSessionFilterUserId" type="text" placeholder="např. user_01" /></label>
+                </div>
+                <div class="filter-actions">
+                  <button class="btn btn-ghost" id="settingsSelectAllFilteredBtn" type="button">Zvolit všechny</button>
+                  <button class="btn btn-ghost" id="settingsClearSelectionBtn" type="button">Zrušit výběr</button>
+                  <button class="btn btn-ghost" id="settingsClearFiltersBtn" type="button">Zrušit filtr</button>
+                </div>
+                <div class="muted small" id="settingsSessionFilterSummary">—</div>
+              </div>
+            </div>
+
+            <div class="list" id="settingsSessionsList">
+              <div class="empty"><div class="empty-title">Zatím žádné sessions</div></div>
+            </div>
+
+            <div class="card-foot foot-split">
+              <div class="muted small" id="settingsSessionStatus">—</div>
+              <div class="row" style="gap:8px;">
+                <button class="btn btn-danger" id="settingsDeleteSelectedBtn" type="button">Smazat vybrané</button>
+                <button class="btn btn-danger" id="settingsDeleteAllBtn" type="button">Smazat všechny</button>
+              </div>
+            </div>
+          </section>
         </section>
       </section>
+      
+      <div class="modal hidden" id="settingsDeleteConfirmModal" role="dialog" aria-modal="true" aria-labelledby="settingsDeleteConfirmTitle">
+        <div class="modal-backdrop" id="settingsDeleteConfirmBackdrop"></div>
+        <div class="modal-card">
+          <div class="modal-head">
+            <div>
+              <div class="modal-title" id="settingsDeleteConfirmTitle">Potvrzení smazání</div>
+            </div>
+            <button class="btn btn-ghost" id="settingsDeleteConfirmCloseBtn" type="button">✕</button>
+          </div>
+          <div class="modal-body">
+            <p id="settingsDeleteConfirmText">Chystáte se smazat vybrané sessions. Tímto dojde k jejich odstranění z databáze. Opravdu si přejete pokračovat?</p>
+          </div>
+          <div class="modal-foot">
+            <button class="btn btn-ghost" id="settingsDeleteConfirmCancelBtn" type="button">Ne, zpět</button>
+            <button class="btn btn-danger" id="settingsDeleteConfirmOkBtn" type="button">Ano, smazat tyto sessions</button>
+          </div>
+        </div>
+      </div>
 
       <!-- PAGE 2: SESSIONS LIST FOR SELECTED TEST -->
       <section class="page hidden" id="view-individual">
@@ -715,7 +776,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="/static/app.js?v=21"></script>
+  <script src="/static/app.js?v=22"></script>
 </body>
 
 </html>

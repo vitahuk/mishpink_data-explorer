@@ -3,17 +3,11 @@ UI:
 
 
 
-Prostorová data:
- - 2D trajektorie každé session, barevně typ pohybu?
- 
-
-
-
 po konzultaci:
 - nahrávání combined CSV kde je více uživatelů - druhé tlačítko pro nahrání  --- hotovo
-- agregace do skupin + potom srovnání 2-3 skupin
-- u porovnávání agregace mě zajímají statistiky na úrovni úloh - průměrný čas řešení úlohy atd.
-- nějaké grafy bych tam měl dát, nevím jaké
+- agregace do skupin + potom srovnání 2-3 skupin --- hotovo
+- u porovnávání agregace mě zajímají statistiky na úrovni úloh - průměrný čas řešení úlohy atd. --- hotovo
+- nějaké grafy bych tam měl dát, nevím jaké - asi to není tak důležité, ale třeba nějaké boxploty pro porovnání časů řešení úloh mezi skupinami, nebo nějaké histogramy pro rozložení časů řešení úloh.
 - heatmapy fakt moc nedávají smysl
 
 
@@ -21,15 +15,28 @@ po konzultaci:
 
 
 další konzultace:
-- wordcloud pro psané odpovědi u agregace
-- agregace uživatelů a pak na úrovni úloh
-- prostorová data, možnost zvolit podklad když to půjde
+- wordcloud pro psané odpovědi u agregace - musím doladit
+- agregace uživatelů a pak na úrovni úloh --- hotovo
+- prostorová data, možnost zvolit podklad když to půjde --- hotovo
 - device do metriky session
 - správné odpovědi = názvy polygonů, porovnávat ty stringy
 
 
 
 export CSV agregovaných statistik
-
 příště jak k tomu sednu, tak musím udělat mapy pro jednotlivé úlohy každého uživatele. omezit to filtrem jen na úlohu, asi tam zobrazit docela v detailu eventy, popupy
 
+
+konzultace v Olomouci:
+- robustní filtrace uživatelů, pak možnost exportu CSV kde budou všechna data
+- export timeline pro Gazeplotter - Míša Vojtěchovská, vzor csv na jejich stránkách v nápovědě - easy
+- prohodit osy v tabulkách ve srovnání skupin
+- zobrazení všech uživatelů skupiny včetně jejich základních statistik a možnost si je označit nějakým vykřičníkem. pak filtr na vykřičník a možnost všechny ze skupiny vymazat
+- exporty všeho
+
+
+uživatelský test kvalitativní:
+- na pár reálných uživatelích kteří to budou později využívat. pozorovat, rozhovor
+
+uživatelský test kvatitativní:
+https://www.ueq-online.org/

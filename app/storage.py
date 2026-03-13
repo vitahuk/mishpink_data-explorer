@@ -1,10 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-import threading
 import json
+import os
+import threading
+
+from sqlalchemy import String, Text, create_engine, select, delete, event
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+from sqlalchemy.types import JSON
+from sqlalchemy.schema import ForeignKey
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
@@ -12,8 +18,6 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 TEST_ANSWERS_FILE = DATA_DIR / "test_answers.json"
 GROUPS_FILE = DATA_DIR / "groups.json"
-_TEST_ANSWERS_LOCK = threading.Lock()
-_GROUPS_LOCK = threading.Lock()
 
 
 @dataclass
@@ -26,55 +30,116 @@ class SessionData:
     stats: Dict[str, Any]
 
 
-class InMemoryStore:
-    """
-    Pro MVP ukládáme metadata do paměti.
-    CSV soubory ukládáme na disk do data/uploads.
-    Později lze nahradit DB (SQLite/Postgres) bez změny API kontraktu.
-    """
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._sessions: Dict[str, SessionData] = {}
-
-    def upsert(self, session: SessionData) -> None:
-        with self._lock:
-            self._sessions[session.session_id] = session
-
-    def get(self, session_id: str) -> Optional[SessionData]:
-        with self._lock:
-            return self._sessions.get(session_id)
-
-    def list_sessions(self) -> Dict[str, SessionData]:
-        with self._lock:
-            return dict(self._sessions)
+class Base(DeclarativeBase):
+    pass
 
 
-STORE = InMemoryStore()
+class TestRecord(Base):
+    __tablename__ = "tests"
+
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
 
-def ensure_upload_dir() -> Path:
-    p = Path("data/uploads")
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+class TaskRecord(Base):
+    __tablename__ = "tasks"
+
+    test_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("tests.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
 
 
-# =========================
-# Test answers persistence
-# =========================
+class SessionRecord(Base):
+    __tablename__ = "sessions"
 
-def _read_test_answers_file() -> Dict[str, Dict[str, str]]:
-    """
-    Returns structure: { test_id: { task_id: str } }
-    Robust against missing file / invalid JSON.
-    """
-    if not TEST_ANSWERS_FILE.exists():
-        return {}
+    session_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    test_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("tests.id", ondelete="RESTRICT"),
+        index=True,
+        default="TEST",
+    )
+    file_path: Mapped[str] = mapped_column(Text())
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    task: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    stats: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
-    try:
-        raw = json.loads(TEST_ANSWERS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
 
+class TestAnswerRecord(Base):
+    __tablename__ = "test_answers"
+
+    test_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("tests.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    task_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    answer: Mapped[str] = mapped_column(Text())
+
+
+class GroupRecord(Base):
+    __tablename__ = "groups"
+
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    test_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("tests.id", ondelete="CASCADE"),
+        index=True,
+        default="TEST",
+    )
+    name: Mapped[str] = mapped_column(String(255))
+
+    session_links: Mapped[List["GroupSessionRecord"]] = relationship(
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+
+
+class GroupSessionRecord(Base):
+    __tablename__ = "group_sessions"
+
+    group_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("groups.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    session_id: Mapped[str] = mapped_column(
+        String(255),
+        ForeignKey("sessions.session_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    group: Mapped[GroupRecord] = relationship(back_populates="session_links")
+
+
+def _build_database_url() -> str:
+    configured_url = os.getenv("DATABASE_URL")
+    if configured_url:
+        return configured_url
+    sqlite_path = DATA_DIR / "app.db"
+    return f"sqlite:///{sqlite_path}"
+
+
+DATABASE_URL = _build_database_url()
+_engine_kwargs: Dict[str, Any] = {"future": True}
+if DATABASE_URL.startswith("sqlite"):
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+
+if DATABASE_URL.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, connection_record) -> None:  # type: ignore[no-untyped-def]
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
+def _normalize_test_answers_data(raw: Any) -> Dict[str, Dict[str, str]]:
     if not isinstance(raw, dict):
         return {}
 
@@ -84,6 +149,7 @@ def _read_test_answers_file() -> Dict[str, Dict[str, str]]:
             continue
         if not isinstance(answers, dict):
             continue
+
         out[test_id] = {}
         for task_id, val in answers.items():
             if not isinstance(task_id, str):
@@ -96,67 +162,19 @@ def _read_test_answers_file() -> Dict[str, Dict[str, str]]:
     return out
 
 
-def _write_test_answers_file(data: Dict[str, Dict[str, str]]) -> None:
-    TEST_ANSWERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    TEST_ANSWERS_FILE.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-
-def get_test_answers(test_id: str) -> Dict[str, str]:
-    """
-    Get answers for one test: { task_id: str }
-    """
-    with _TEST_ANSWERS_LOCK:
-        all_answers = _read_test_answers_file()
-        answers = all_answers.get(test_id, {})
-        return dict(answers) if isinstance(answers, dict) else {}
-
-
-def set_test_answer(test_id: str, task_id: str, answer: Optional[str]) -> Dict[str, str]:
-    """
-    Set or delete answer for (test_id, task_id).
-    If answer is None => delete key.
-    Returns updated mapping for given test.
-    """
-    if not isinstance(test_id, str) or not test_id:
-        test_id = "TEST"
-    if not isinstance(task_id, str) or not task_id:
-        task_id = "unknown"
-
-    with _TEST_ANSWERS_LOCK:
-        all_answers = _read_test_answers_file()
-
-        if test_id not in all_answers or not isinstance(all_answers.get(test_id), dict):
-            all_answers[test_id] = {}
-
-        if answer is None:
-            all_answers[test_id].pop(task_id, None)
-        else:
-            normalized_answer = str(answer).strip()
-            if not normalized_answer:
-                all_answers[test_id].pop(task_id, None)
-            else:
-                all_answers[test_id][task_id] = normalized_answer
-
-        _write_test_answers_file(all_answers)
-        return dict(all_answers[test_id])
-
-
-# =========================
-# Groups persistence
-# =========================
-
-def _read_groups_file() -> List[Dict[str, Any]]:
-    if not GROUPS_FILE.exists():
-        return []
+def _load_test_answers_from_json() -> Dict[str, Dict[str, str]]:
+    if not TEST_ANSWERS_FILE.exists():
+        return {}
 
     try:
-        raw = json.loads(GROUPS_FILE.read_text(encoding="utf-8"))
+        raw = json.loads(TEST_ANSWERS_FILE.read_text(encoding="utf-8"))
     except Exception:
-        return []
+        return {}
 
+    return _normalize_test_answers_data(raw)
+
+
+def _normalize_groups_data(raw: Any) -> List[Dict[str, Any]]:
     if not isinstance(raw, list):
         return []
 
@@ -180,33 +198,293 @@ def _read_groups_file() -> List[Dict[str, Any]]:
         if not group_id or not name:
             continue
 
-        out.append({
-            "id": group_id,
-            "test_id": test_id,
-            "name": name,
-            "session_ids": normalized_session_ids,
-        })
+        out.append(
+            {
+                "id": group_id,
+                "test_id": test_id,
+                "name": name,
+                "session_ids": normalized_session_ids,
+            }
+        )
 
     return out
 
 
-def _write_groups_file(groups: List[Dict[str, Any]]) -> None:
-    GROUPS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    GROUPS_FILE.write_text(
-        json.dumps(groups, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+def _load_groups_from_json() -> List[Dict[str, Any]]:
+    if not GROUPS_FILE.exists():
+        return []
+
+    try:
+        raw = json.loads(GROUPS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+    return _normalize_groups_data(raw)
+
+
+def _ensure_test(db, test_id: str) -> None:
+    if not db.get(TestRecord, test_id):
+        db.add(TestRecord(id=test_id, name=None))
+
+
+def _ensure_task(db, test_id: str, task_id: str) -> None:
+    _ensure_test(db, test_id)
+    if not db.get(TaskRecord, {"test_id": test_id, "id": task_id}):
+        db.add(TaskRecord(test_id=test_id, id=task_id))
+
+
+_migration_lock = threading.Lock()
+
+
+def _migrate_json_seed_data() -> None:
+    with _migration_lock:
+        with SessionLocal() as db:
+            answers_seed = _load_test_answers_from_json()
+            groups_seed = _load_groups_from_json()
+
+            all_test_ids = {"TEST"}
+            all_test_ids.update(tid for tid in answers_seed.keys() if isinstance(tid, str) and tid.strip())
+            all_test_ids.update(str(g.get("test_id") or "TEST").strip() or "TEST" for g in groups_seed)
+            for test_id in all_test_ids:
+                _ensure_test(db, test_id)
+            db.flush()
+
+            has_answers = db.execute(select(TestAnswerRecord).limit(1)).scalar_one_or_none() is not None
+            if not has_answers:
+                for test_id, answers in answers_seed.items():
+                    for task_id, answer in answers.items():
+                        _ensure_task(db, test_id, task_id)
+                        db.add(TestAnswerRecord(test_id=test_id, task_id=task_id, answer=answer))
+                db.flush()
+
+            has_groups = db.execute(select(GroupRecord).limit(1)).scalar_one_or_none() is not None
+            if not has_groups:
+                for group in groups_seed:
+                    normalized_test_id = str(group.get("test_id") or "TEST").strip() or "TEST"
+                    db.add(
+                        GroupRecord(
+                            id=group["id"],
+                            test_id=normalized_test_id,
+                            name=group["name"],
+                        )
+                    )
+                db.flush()
+
+            db.commit()
+
+
+def init_db() -> None:
+    Base.metadata.create_all(bind=engine)
+    _migrate_json_seed_data()
+
+
+class DatabaseStore:
+    def __init__(self) -> None:
+        init_db()
+
+    def upsert(self, session: SessionData) -> None:
+        payload_stats = session.stats if isinstance(session.stats, dict) else {}
+        normalized_test_id = str(session.test_id or "TEST").strip() or "TEST"
+
+        with SessionLocal() as db:
+            _ensure_test(db, normalized_test_id)
+
+            existing = db.get(SessionRecord, session.session_id)
+            if existing:
+                existing.test_id = normalized_test_id
+                existing.file_path = session.file_path
+                existing.user_id = session.user_id
+                existing.task = session.task
+                existing.stats = payload_stats
+            else:
+                db.add(
+                    SessionRecord(
+                        session_id=session.session_id,
+                        test_id=normalized_test_id,
+                        file_path=session.file_path,
+                        user_id=session.user_id,
+                        task=session.task,
+                        stats=payload_stats,
+                    )
+                )
+            db.commit()
+
+    def get(self, session_id: str) -> Optional[SessionData]:
+        with SessionLocal() as db:
+            row = db.get(SessionRecord, session_id)
+            if not row:
+                return None
+            return SessionData(
+                session_id=row.session_id,
+                test_id=row.test_id,
+                file_path=row.file_path,
+                user_id=row.user_id,
+                task=row.task,
+                stats=row.stats if isinstance(row.stats, dict) else {},
+            )
+
+    def list_sessions(self) -> Dict[str, SessionData]:
+        with SessionLocal() as db:
+            rows = db.execute(select(SessionRecord)).scalars().all()
+            return {
+                row.session_id: SessionData(
+                    session_id=row.session_id,
+                    test_id=row.test_id,
+                    file_path=row.file_path,
+                    user_id=row.user_id,
+                    task=row.task,
+                    stats=row.stats if isinstance(row.stats, dict) else {},
+                )
+                for row in rows
+            }
+
+def delete_sessions(self, test_id: str, session_ids: List[str]) -> int:
+        normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+        normalized_ids = [str(sid).strip() for sid in session_ids if isinstance(sid, str) and str(sid).strip()]
+        if not normalized_ids:
+            return 0
+
+        with SessionLocal() as db:
+            rows = db.execute(
+                select(SessionRecord).where(
+                    SessionRecord.test_id == normalized_test_id,
+                    SessionRecord.session_id.in_(normalized_ids),
+                )
+            ).scalars().all()
+
+            for row in rows:
+                db.delete(row)
+
+            deleted_count = len(rows)
+            db.commit()
+            return deleted_count
+
+def delete_all_sessions_for_test(self, test_id: str) -> int:
+    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(SessionRecord).where(SessionRecord.test_id == normalized_test_id)
+        ).scalars().all()
+
+        for row in rows:
+            db.delete(row)
+
+        deleted_count = len(rows)
+        db.commit()
+        return deleted_count
+
+
+STORE = DatabaseStore()
+
+def delete_sessions(test_id: str, session_ids: List[str]) -> int:
+    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+    normalized_ids = [str(sid).strip() for sid in session_ids if isinstance(sid, str) and str(sid).strip()]
+    if not normalized_ids:
+        return 0
+
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(SessionRecord).where(
+                SessionRecord.test_id == normalized_test_id,
+                SessionRecord.session_id.in_(normalized_ids),
+            )
+        ).scalars().all()
+
+        for row in rows:
+            db.delete(row)
+
+        deleted_count = len(rows)
+        db.commit()
+        return deleted_count
+
+def delete_all_sessions_for_test(test_id: str) -> int:
+    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(SessionRecord).where(SessionRecord.test_id == normalized_test_id)
+        ).scalars().all()
+
+        for row in rows:
+            db.delete(row)
+
+        deleted_count = len(rows)
+        db.commit()
+        return deleted_count
+
+def ensure_upload_dir() -> Path:
+    p = Path("data/uploads")
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def get_test_answers(test_id: str) -> Dict[str, str]:
+    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(TestAnswerRecord).where(TestAnswerRecord.test_id == normalized_test_id)
+        ).scalars().all()
+        return {row.task_id: row.answer for row in rows}
+
+
+def set_test_answer(test_id: str, task_id: str, answer: Optional[str]) -> Dict[str, str]:
+    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+    normalized_task_id = str(task_id or "unknown").strip() or "unknown"
+
+    with SessionLocal() as db:
+        _ensure_task(db, normalized_test_id, normalized_task_id)
+
+        row = db.get(TestAnswerRecord, {"test_id": normalized_test_id, "task_id": normalized_task_id})
+        if answer is None:
+            if row:
+                db.delete(row)
+        else:
+            normalized_answer = str(answer).strip()
+            if not normalized_answer:
+                if row:
+                    db.delete(row)
+            else:
+                if row:
+                    row.answer = normalized_answer
+                else:
+                    db.add(
+                        TestAnswerRecord(
+                            test_id=normalized_test_id,
+                            task_id=normalized_task_id,
+                            answer=normalized_answer,
+                        )
+                    )
+
+        db.commit()
+
+        rows = db.execute(
+            select(TestAnswerRecord).where(TestAnswerRecord.test_id == normalized_test_id)
+        ).scalars().all()
+        return {item.task_id: item.answer for item in rows}
 
 
 def list_groups(test_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    with _GROUPS_LOCK:
-        groups = _read_groups_file()
+    with SessionLocal() as db:
+        stmt = select(GroupRecord)
+        if isinstance(test_id, str) and test_id.strip():
+            stmt = stmt.where(GroupRecord.test_id == test_id.strip())
 
-    if isinstance(test_id, str) and test_id.strip():
-        normalized_test_id = test_id.strip()
-        groups = [g for g in groups if g.get("test_id") == normalized_test_id]
+        groups = db.execute(stmt).scalars().all()
 
-    return groups
+        out: List[Dict[str, Any]] = []
+        for group in groups:
+            session_ids = [link.session_id for link in group.session_links]
+            out.append(
+                {
+                    "id": group.id,
+                    "test_id": group.test_id,
+                    "name": group.name,
+                    "session_ids": session_ids,
+                }
+            )
+
+        return out
 
 
 def upsert_group(group_id: str, test_id: str, name: str, session_ids: List[str]) -> Dict[str, Any]:
@@ -224,20 +502,52 @@ def upsert_group(group_id: str, test_id: str, name: str, session_ids: List[str])
     if not normalized_name:
         raise ValueError("name is required")
 
-    payload = {
+    deduplicated_session_ids = list(dict.fromkeys(normalized_session_ids))
+
+    with SessionLocal() as db:
+        _ensure_test(db, normalized_test_id)
+
+        if deduplicated_session_ids:
+            existing_ids = set(
+                db.execute(
+                    select(SessionRecord.session_id).where(SessionRecord.session_id.in_(deduplicated_session_ids))
+                ).scalars().all()
+            )
+            missing_ids = [sid for sid in deduplicated_session_ids if sid not in existing_ids]
+            if missing_ids:
+                raise ValueError(f"session_ids not found: {', '.join(missing_ids)}")
+
+            wrong_test_ids = db.execute(
+                select(SessionRecord.session_id).where(
+                    SessionRecord.session_id.in_(deduplicated_session_ids),
+                    SessionRecord.test_id != normalized_test_id,
+                )
+            ).scalars().all()
+            if wrong_test_ids:
+                raise ValueError("All session_ids must belong to the same test_id as the group")
+
+        group = db.get(GroupRecord, normalized_group_id)
+        if not group:
+            group = GroupRecord(
+                id=normalized_group_id,
+                test_id=normalized_test_id,
+                name=normalized_name,
+            )
+            db.add(group)
+            db.flush()
+        else:
+            group.test_id = normalized_test_id
+            group.name = normalized_name
+
+        db.execute(delete(GroupSessionRecord).where(GroupSessionRecord.group_id == normalized_group_id))
+        for sid in deduplicated_session_ids:
+            db.add(GroupSessionRecord(group_id=normalized_group_id, session_id=sid))
+
+        db.commit()
+
+    return {
         "id": normalized_group_id,
         "test_id": normalized_test_id,
         "name": normalized_name,
-        "session_ids": list(dict.fromkeys(normalized_session_ids)),
+        "session_ids": deduplicated_session_ids,
     }
-
-    with _GROUPS_LOCK:
-        groups = _read_groups_file()
-        idx = next((i for i, g in enumerate(groups) if g.get("id") == normalized_group_id), None)
-        if idx is None:
-            groups.append(payload)
-        else:
-            groups[idx] = payload
-        _write_groups_file(groups)
-
-    return payload

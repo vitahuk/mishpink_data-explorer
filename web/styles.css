@@ -323,6 +323,15 @@ p {
   border-color: rgba(106, 166, 255, .65);
 }
 
+.btn-danger {
+  border-color: rgba(255, 107, 107, .65);
+  background: rgba(255, 107, 107, .16);
+}
+
+.btn-danger:hover {
+  border-color: rgba(255, 107, 107, .92);
+}
+
 .icon-btn {
   width: 38px;
   height: 38px;

@@ -18,7 +18,7 @@ import pandas as pd
 
 from app.storage import STORE, SessionData, ensure_upload_dir
 from app.storage import get_test_answers, set_test_answer
-from app.storage import list_groups, upsert_group
+from app.storage import list_groups, upsert_group, delete_sessions, delete_all_sessions_for_test
 from app.parsing.maptrack_csv import (
     parse_session,
     parse_session_df,
@@ -697,6 +697,33 @@ def get_session_spatial_trace(session_id: str, task_id: Optional[str] = None):
         "session_id": s.session_id,
         "user_id": s.user_id,
         "spatial": trace,
+    }
+
+
+@app.delete("/api/tests/{test_id}/sessions")
+def api_delete_test_sessions(test_id: str, payload: dict = Body(...)):
+    session_ids = payload.get("session_ids", [])
+    if not isinstance(session_ids, list) or not session_ids:
+        raise HTTPException(status_code=400, detail="session_ids must be non-empty list")
+
+    normalized_ids = [str(sid).strip() for sid in session_ids if isinstance(sid, str) and str(sid).strip()]
+    if not normalized_ids:
+        raise HTTPException(status_code=400, detail="session_ids must contain valid values")
+
+    deleted_count = delete_sessions(test_id=test_id, session_ids=normalized_ids)
+    return {
+        "test_id": test_id,
+        "requested_count": len(normalized_ids),
+        "deleted_count": deleted_count,
+    }
+
+
+@app.delete("/api/tests/{test_id}/sessions/all")
+def api_delete_all_test_sessions(test_id: str):
+    deleted_count = delete_all_sessions_for_test(test_id=test_id)
+    return {
+        "test_id": test_id,
+        "deleted_count": deleted_count,
     }
 
 
