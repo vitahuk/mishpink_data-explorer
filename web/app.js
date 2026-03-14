@@ -3399,7 +3399,7 @@ function renderGroupEditMetricsPicker() {
   const selected = new Set(state.groupEditMetrics ?? []);
   el.innerHTML = GROUP_EDIT_METRIC_OPTIONS.map((m) => {
     const active = selected.has(m.key) ? "is-selected" : "";
-    return `<button class="chip ${active}" type="button" data-role="group-edit-metric" data-key="${escapeHtml(m.key)}">${escapeHtml(m.label)}</button>`;
+    return `<button class="chip ${active}" type="button" aria-pressed="${selected.has(m.key) ? "true" : "false"}" data-role="group-edit-metric" data-key="${escapeHtml(m.key)}">${escapeHtml(m.label)}</button>`;
   }).join("");
 
   $$("#groupEditMetricsPicker [data-role='group-edit-metric']").forEach((btn) => {
@@ -3476,7 +3476,7 @@ function renderGroupEditSessionsList() {
 
   listEl.innerHTML = filtered.map((s) => {
     const checked = selectedSet.has(s.session_id) ? "checked" : "";
-    const flagged = flaggedSet.has(s.session_id) ? "is-selected" : "";
+    const flagged = flaggedSet.has(s.session_id) ? "is-flagged" : "";
     const active = state.groupEditSelectedSessionId === s.session_id ? "is-selected" : "";
     return `
       <div class="list-item ${active}" data-role="group-edit-item" data-session="${escapeHtml(s.session_id)}" style="cursor:default;">
@@ -3488,7 +3488,7 @@ function renderGroupEditSessionsList() {
               <div class="muted small">session: ${escapeHtml(s.session_id)}</div>
             </div>
           </label>
-          <button class="btn btn-ghost ${flagged}" data-role="group-edit-flag" data-session="${escapeHtml(s.session_id)}" type="button" title="Označit !">!</button>
+          <button class="btn btn-ghost group-edit-flag ${flagged}" aria-pressed="${flaggedSet.has(s.session_id) ? "true" : "false"}" data-role="group-edit-flag" data-session="${escapeHtml(s.session_id)}" type="button" title="Označit !">!</button>
         </div>
       </div>
     `;

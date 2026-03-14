@@ -759,9 +759,9 @@ p {
 .wordcloud-wrap {
   margin-top: 10px;
   padding: 10px;
-  border: 1px solid rgba(255,255,255,.12);
+  border: 1px solid rgba(255, 255, 255, .12);
   border-radius: 12px;
-  background: rgba(255,255,255,.02);
+  background: rgba(255, 255, 255, .02);
 }
 
 .wordcloud {
@@ -781,13 +781,14 @@ p {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 10px;
 }
+
 .layout-2-1 {
   display: grid;
   grid-template-columns: minmax(320px, 1.1fr) minmax(300px, 0.9fr);
   gap: 14px;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 760px) {
   .layout-2-1 {
     grid-template-columns: 1fr;
   }
@@ -812,4 +813,37 @@ p {
   border-color: var(--accent);
   color: var(--text);
   background: rgba(106, 166, 255, .15);
+}
+
+.group-edit-flag {
+  min-width: 38px;
+  font-weight: 900;
+  color: #ffd6d6;
+}
+
+.group-edit-flag.is-flagged {
+  border-color: #ff6b6b;
+  color: #ffffff;
+  background: rgba(255, 107, 107, .28);
+  box-shadow: 0 0 0 3px rgba(255, 107, 107, .18);
+}
+
+.group-edit-flag.is-flagged:hover {
+  border-color: #ff8f8f;
+  background: rgba(255, 107, 107, .36);
+}
+
+.chip {
+  font-weight: 700;
+}
+
+.chip.is-selected {
+  border-color: #8fc2ff;
+  color: #ffffff;
+  background: linear-gradient(135deg, rgba(58, 130, 255, .42), rgba(87, 168, 255, .3));
+  box-shadow: 0 0 0 3px rgba(106, 166, 255, .16);
+}
+
+.chip.is-selected::before {
+  content: "✓ ";
 }
