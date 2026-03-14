@@ -3398,8 +3398,9 @@ function renderGroupEditMetricsPicker() {
   if (!el) return;
   const selected = new Set(state.groupEditMetrics ?? []);
   el.innerHTML = GROUP_EDIT_METRIC_OPTIONS.map((m) => {
-    const active = selected.has(m.key) ? "is-selected" : "";
-    return `<button class="chip ${active}" type="button" aria-pressed="${selected.has(m.key) ? "true" : "false"}" data-role="group-edit-metric" data-key="${escapeHtml(m.key)}">${escapeHtml(m.label)}</button>`;
+    const isSelected = selected.has(m.key);
+    const active = isSelected ? "is-selected" : "is-unselected";
+    return `<button class="chip group-edit-metric-chip ${active}" type="button" aria-pressed="${isSelected ? "true" : "false"}" data-role="group-edit-metric" data-key="${escapeHtml(m.key)}">${escapeHtml(m.label)}</button>`;
   }).join("");
 
   $$("#groupEditMetricsPicker [data-role='group-edit-metric']").forEach((btn) => {

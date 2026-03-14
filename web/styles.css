@@ -782,18 +782,6 @@ p {
   gap: 10px;
 }
 
-.layout-2-1 {
-  display: grid;
-  grid-template-columns: minmax(320px, 1.1fr) minmax(300px, 0.9fr);
-  gap: 14px;
-}
-
-@media (max-width: 760px) {
-  .layout-2-1 {
-    grid-template-columns: 1fr;
-  }
-}
-
 .chip-picker {
   display: flex;
   flex-wrap: wrap;
@@ -807,34 +795,8 @@ p {
   border-radius: 999px;
   padding: 6px 10px;
   cursor: pointer;
-}
-
-.chip.is-selected {
-  border-color: var(--accent);
-  color: var(--text);
-  background: rgba(106, 166, 255, .15);
-}
-
-.group-edit-flag {
-  min-width: 38px;
-  font-weight: 900;
-  color: #ffd6d6;
-}
-
-.group-edit-flag.is-flagged {
-  border-color: #ff6b6b;
-  color: #ffffff;
-  background: rgba(255, 107, 107, .28);
-  box-shadow: 0 0 0 3px rgba(255, 107, 107, .18);
-}
-
-.group-edit-flag.is-flagged:hover {
-  border-color: #ff8f8f;
-  background: rgba(255, 107, 107, .36);
-}
-
-.chip {
   font-weight: 700;
+  transition: background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
 }
 
 .chip.is-selected {
@@ -846,4 +808,67 @@ p {
 
 .chip.is-selected::before {
   content: "✓ ";
+}
+
+.group-edit-metric-chip.is-selected {
+  border-color: rgba(98, 220, 145, .85);
+  background: rgba(71, 189, 120, .3);
+  box-shadow: 0 0 0 3px rgba(71, 189, 120, .18);
+}
+
+.group-edit-metric-chip.is-unselected {
+  border-color: rgba(240, 98, 98, .72);
+  color: #ffd6d6;
+  background: rgba(240, 98, 98, .18);
+}
+
+.group-edit-flag {
+  min-width: 38px;
+  font-weight: 900;
+  color: #ffb8b8;
+}
+
+.group-edit-flag.is-flagged,
+.group-edit-flag.is-flagged:hover {
+  border-color: #ff6b6b;
+  color: #ffffff;
+  background: rgba(255, 107, 107, .32);
+  box-shadow: 0 0 0 3px rgba(255, 107, 107, .2);
+}
+
+#deleteGroupBtn {
+  border-color: rgba(255, 107, 107, .8);
+  background: rgba(255, 107, 107, .24);
+}
+
+#deleteGroupBtn:hover {
+  border-color: rgba(255, 107, 107, .96);
+  background: rgba(255, 107, 107, .34);
+}
+
+#groupEditMetricsPicker .group-edit-metric-chip {
+  appearance: none;
+}
+
+#groupEditMetricsPicker .group-edit-metric-chip.is-selected {
+  border-color: rgba(98, 220, 145, .9) !important;
+  color: #eafff1 !important;
+  background: rgba(71, 189, 120, .34) !important;
+  box-shadow: 0 0 0 3px rgba(71, 189, 120, .2) !important;
+}
+
+#groupEditMetricsPicker .group-edit-metric-chip.is-unselected {
+  border-color: rgba(240, 98, 98, .82) !important;
+  color: #ffdcdc !important;
+  background: rgba(240, 98, 98, .22) !important;
+  box-shadow: none !important;
+}
+
+#groupEditSessionsList .group-edit-flag.is-flagged,
+#groupEditSessionsList .group-edit-flag.is-flagged:hover,
+#groupEditSessionsList .group-edit-flag.is-flagged:focus-visible {
+  border-color: #ff6b6b !important;
+  color: #ffffff !important;
+  background: rgba(255, 107, 107, .36) !important;
+  box-shadow: 0 0 0 3px rgba(255, 107, 107, .22) !important;
 }
