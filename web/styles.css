@@ -781,3 +781,35 @@ p {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 10px;
 }
+.layout-2-1 {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.1fr) minmax(300px, 0.9fr);
+  gap: 14px;
+}
+
+@media (max-width: 980px) {
+  .layout-2-1 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.chip-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  border: 1px solid rgba(34, 48, 74, .9);
+  background: rgba(7, 10, 20, .35);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.chip.is-selected {
+  border-color: var(--accent);
+  color: var(--text);
+  background: rgba(106, 166, 255, .15);
+}

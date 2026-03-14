@@ -29,12 +29,12 @@ příště jak k tomu sednu, tak musím udělat mapy pro jednotlivé úlohy kaž
 
 konzultace v Olomouci:
 - robustní filtrace uživatelů, pak možnost exportu CSV kde budou všechna data
-- export timeline pro Gazeplotter - Míša Vojtěchovská, vzor csv na jejich stránkách v nápovědě - easy
+- export timeline pro Gazeplotter - Míša Vojtěchovská, vzor csv na jejich stránkách v nápovědě - easy --- hotovo
 - prohodit osy v tabulkách ve srovnání skupin
 - zobrazení všech uživatelů skupiny včetně jejich základních statistik a možnost si je označit nějakým vykřičníkem. pak filtr na vykřičník a možnost všechny ze skupiny vymazat
 - exporty všeho
 - zobrazení poměru typu pohybu u uživatelů, ale pak i srovnání na úrovni skupiny
-- v mapách zobrazit velikost okna, jak to uživatel zrovna viděl
+- v mapách zobrazit velikost okna, jak to uživatel zrovna viděl --- hotovo
 
 
 uživatelský test kvalitativní:
@@ -42,3 +42,7 @@ uživatelský test kvalitativní:
 
 uživatelský test kvatitativní:
 https://www.ueq-online.org/
+
+mám hotové zadání z olomouce:
+- gazeplotter - bude potřeba upravit trochu, ale funguje
+- viewport okna v mapách - done

@@ -370,6 +370,84 @@
         </div>
       </section>
 
+      <section class="page hidden" id="view-group-edit">
+        <div class="page-head">
+          <div>
+            <h1>Editace skupiny</h1>
+            <p class="muted" id="groupEditPageSubtitle">Ruční filtrace uživatelů ve vybrané skupině.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-ghost" id="backFromGroupEditBtn" type="button">← Zpět na skupiny</button>
+          </div>
+        </div>
+
+        <div class="tab-row" id="groupEditTabs" role="tablist" aria-label="Editace skupiny" style="margin-bottom:12px;">
+          <button class="tab-btn is-active" type="button" role="tab" data-tab="sessions">Editace sessions</button>
+          <button class="tab-btn" type="button" role="tab" data-tab="settings">Nastavení skupiny</button>
+        </div>
+
+        <section data-group-edit-panel="sessions">
+          <div class="layout-2-1">
+            <section class="card">
+              <div class="card-head">
+                <h2>Sessions ve skupině</h2>
+                <div class="muted small">Zaškrtávátko = výběr pro novou skupinu · ! = kandidát na odebrání.</div>
+              </div>
+              <div class="filter-panel">
+                <label class="filter-field">
+                  <span>Vyhledat podle user/session</span>
+                  <input id="groupEditSearchInput" type="search" placeholder="např. 12345 nebo session_01" />
+                </label>
+                <div class="filter-grid">
+                  <label class="filter-field"><span>Pohlaví</span><select id="groupEditFilterGender"></select></label>
+                  <label class="filter-field"><span>Věk od</span><input id="groupEditFilterAgeMin" type="number" min="0" /></label>
+                  <label class="filter-field"><span>Věk do</span><input id="groupEditFilterAgeMax" type="number" min="0" /></label>
+                  <label class="filter-field"><span>Povolání</span><select id="groupEditFilterOccupation"></select></label>
+                  <label class="filter-field"><span>Národnost</span><select id="groupEditFilterNationality"></select></label>
+                </div>
+                <div class="filter-actions">
+                  <label class="row" style="gap:6px;"><input id="groupEditOnlyFlagged" type="checkbox" />Jen označené !</label>
+                  <button class="btn btn-ghost" id="groupEditSelectAllBtn" type="button">Zvolit všechny</button>
+                  <button class="btn btn-ghost" id="groupEditClearFiltersBtn" type="button">Zrušit filtr</button>
+                  <div class="muted small" id="groupEditSummary"></div>
+                </div>
+              </div>
+              <div class="list" id="groupEditSessionsList"></div>
+              <div class="card-foot foot-split">
+                <button class="btn" id="groupEditCreateGroupFromSelectedBtn" type="button">Vytvořit skupinu z vybraných</button>
+                <button class="btn btn-danger" id="groupEditDeleteFlaggedBtn" type="button">Odebrat ! ze skupiny</button>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-head">
+                <h2>Metriky session</h2>
+                <div class="muted small">UserID je vždy zobrazené.</div>
+              </div>
+              <label class="filter-field">
+                <span>Zobrazené metriky</span>
+                <div id="groupEditMetricsPicker" class="chip-picker"></div>
+              </label>
+              <div class="metrics" id="groupEditSessionMetrics"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="hidden" data-group-edit-panel="settings">
+          <section class="card">
+            <div class="card-head"><h2>Nastavení skupiny</h2></div>
+            <div class="filter-panel">
+              <label class="filter-field"><span>Název skupiny</span><input id="groupEditNameInput" type="text" /></label>
+              <label class="filter-field"><span>Poznámka</span><textarea id="groupEditNoteInput" class="text-area-input" rows="8"></textarea></label>
+              <div style="display:flex; justify-content:flex-end;"><button class="btn btn-danger" id="deleteGroupBtn" type="button">Smazat skupinu</button></div>
+            </div>
+          </section>
+        </section>
+        <div class="row" style="justify-content:space-between; margin-top:10px;">
+          <div class="muted small" id="groupEditStatus"></div>
+          <button class="btn" id="saveGroupEditBtn" type="button">Uložit změny</button>
+        </div>
+      </section>
 
       <!-- PAGE 3: TASKS LIST FOR SELECTED SESSION -->
       <section class="page hidden" id="view-group">
@@ -713,80 +791,26 @@
     </div>
   </div>
 
-  <div class="modal hidden" id="groupEditModal" role="dialog" aria-modal="true" aria-labelledby="groupEditTitle">
-    <div class="modal-backdrop" id="groupEditBackdrop"></div>
-    <div class="modal-card" style="width:min(920px, 96vw);">
+  <div class="modal hidden" id="groupSplitModal" role="dialog" aria-modal="true" aria-labelledby="groupSplitTitle">
+    <div class="modal-backdrop" id="groupSplitBackdrop"></div>
+    <div class="modal-card">
       <div class="modal-head">
         <div>
-          <div class="modal-title" id="groupEditTitle">Editace skupiny</div>
-          <div class="muted small">Přidávej/odebírej uživatele a ulož změny.</div>
+          <div class="modal-title" id="groupSplitTitle">Vytvořit novou skupinu</div>
+          <div class="muted small" id="groupSplitSubtitle">Z vybraných sessions v editaci skupiny.</div>
         </div>
-        <button class="icon-btn" id="closeGroupEditBtn" type="button" aria-label="Zavřít">✕</button>
+        <button class="icon-btn" id="closeGroupSplitBtn" type="button" aria-label="Zavřít">✕</button>
       </div>
       <div class="modal-body">
-        <div class="tab-row" id="groupEditTabs" role="tablist" aria-label="Editace skupiny">
-          <button class="tab-btn is-active" type="button" role="tab" data-tab="sessions">Editace sessions</button>
-          <button class="tab-btn" type="button" role="tab" data-tab="settings">Nastavení skupiny</button>
-        </div>
-
-        <section data-group-edit-panel="sessions">
-          <div class="filter-panel" style="margin-top:10px;">
-          <label class="filter-field">
-            <span>Vyhledat podle názvu (user/session)</span>
-            <input id="groupEditSearchInput" type="search" placeholder="např. 12345 nebo session_01" />
-          </label>
-          <div class="filter-grid">
-            <label class="filter-field">
-              <span>Pohlaví</span>
-              <select id="groupEditFilterGender"></select>
-            </label>
-            <label class="filter-field">
-              <span>Věk od</span>
-              <input id="groupEditFilterAgeMin" type="number" inputmode="numeric" min="0" placeholder="např. 18" />
-            </label>
-            <label class="filter-field">
-              <span>Věk do</span>
-              <input id="groupEditFilterAgeMax" type="number" inputmode="numeric" min="0" placeholder="např. 65" />
-            </label>
-            <label class="filter-field">
-              <span>Povolání</span>
-              <select id="groupEditFilterOccupation"></select>
-            </label>
-            <label class="filter-field">
-              <span>Národnost</span>
-              <select id="groupEditFilterNationality"></select>
-            </label>
-          </div>
-          <div class="filter-actions">
-            <button class="btn btn-ghost" id="groupEditSelectAllBtn" type="button">Zvolit všechny</button>
-            <button class="btn btn-ghost" id="groupEditClearFiltersBtn" type="button">Zrušit filtr</button>
-            <div class="muted small" id="groupEditSummary"></div>
-          </div>
-        </div>
-        <div class="list" id="groupEditSessionsList"></div>
-        </section>
-
-        <section class="hidden" data-group-edit-panel="settings">
-          <div class="filter-panel" style="margin-top:10px;">
-            <label class="filter-field">
-              <span>Název skupiny</span>
-              <input id="groupEditNameInput" type="text" />
-            </label>
-            <label class="filter-field">
-              <span>Poznámka</span>
-              <textarea id="groupEditNoteInput" class="text-area-input" rows="8" placeholder="Poznámka ke skupině..."></textarea>
-            </label>
-            <div style="display:flex; justify-content:flex-end; margin-top:4px;">
-              <button class="btn btn-danger" id="deleteGroupBtn" type="button">Smazat skupinu</button>
-            </div>
-          </div>
-        </section>
-
-        <div class="muted small" id="groupEditStatus" style="margin-top:8px;"></div>
+        <label class="filter-field">
+          <span>Název skupiny</span>
+          <input id="groupSplitNameInput" type="text" placeholder="např. Bez outliers" />
+        </label>
+        <div class="muted small" id="groupSplitStatus" style="margin-top:8px;"></div>
       </div>
       <div class="modal-foot">
-        <button class="btn btn-ghost" id="cancelGroupEditBtn" type="button">Zrušit</button>
-        <button class="btn" id="saveGroupEditBtn" type="button">Uložit změny</button>
+        <button class="btn btn-ghost" id="cancelGroupSplitBtn" type="button">Zrušit</button>
+        <button class="btn" id="confirmGroupSplitBtn" type="button">Vytvořit</button>
       </div>
     </div>
   </div>
@@ -847,7 +871,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="/static/app.js?v=26"></script>
+  <script src="/static/app.js?v=1"></script>
 </body>
 
 </html>

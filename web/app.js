@@ -11,6 +11,7 @@ function setPage(pageId) {
   hide($("#view-individual"));
   hide($("#view-group"));
   hide($("#view-groups"));
+  hide($("#view-group-edit"));
   show($(`#view-${pageId}`));
 }
 
@@ -84,7 +85,11 @@ const state = {
   groupTaskCompareSort: { key: "avgDurationMs", direction: "desc" },
   isGroupUsersExpanded: false,
   groupEditSessionIds: [],
+  groupEditFlaggedSessionIds: [],
+  groupEditSelectedSessionId: null,
   groupEditTab: "sessions",
+  groupEditShowOnlyFlagged: false,
+  groupEditMetrics: ["tasks", "events", "duration", "accuracy", "age", "gender"],
   groupEditFilters: {
     gender: "",
     ageMin: "",
@@ -3329,6 +3334,23 @@ async function saveCreatedGroup() {
   }
 }
 
+function getGroupEditCurrentGroupSessions() {
+  const group = getSelectedGroup();
+  if (!group) return [];
+  const ids = new Set(group.session_ids ?? []);
+  return getSessionsForSelectedTest().filter((s) => ids.has(s.session_id));
+}
+
+function getGroupEditFilteredSessions() {
+  const sessions = getGroupEditCurrentGroupSessions();
+  let filtered = applyGenericSessionFilters(sessions, state.groupEditFilters);
+  if (state.groupEditShowOnlyFlagged) {
+    const flagged = new Set(state.groupEditFlaggedSessionIds ?? []);
+    filtered = filtered.filter((s) => flagged.has(s.session_id));
+  }
+  return filtered;
+}
+
 function renderGroupEditFilterControls(sessions) {
   const genderEl = $("#groupEditFilterGender");
   const occupationEl = $("#groupEditFilterOccupation");
@@ -3336,7 +3358,8 @@ function renderGroupEditFilterControls(sessions) {
   const ageMinEl = $("#groupEditFilterAgeMin");
   const ageMaxEl = $("#groupEditFilterAgeMax");
   const searchEl = $("#groupEditSearchInput");
-  if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !searchEl) return;
+  const onlyFlaggedEl = $("#groupEditOnlyFlagged");
+  if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !searchEl || !onlyFlaggedEl) return;
 
   const options = getSessionFilterOptions(sessions);
   const makeOptions = (values, emptyLabel) => {
@@ -3354,96 +3377,185 @@ function renderGroupEditFilterControls(sessions) {
   ageMinEl.value = state.groupEditFilters.ageMin;
   ageMaxEl.value = state.groupEditFilters.ageMax;
   searchEl.value = state.groupEditFilters.query;
+  onlyFlaggedEl.checked = !!state.groupEditShowOnlyFlagged;
+}
+
+const GROUP_EDIT_METRIC_OPTIONS = [
+  { key: "tasks", label: "Počet tasků" },
+  { key: "events", label: "Počet eventů" },
+  { key: "duration", label: "Celkový čas řešení" },
+  { key: "accuracy", label: "Průměrná správnost odpovědí" },
+  { key: "age", label: "Věk" },
+  { key: "gender", label: "Pohlaví" },
+  { key: "occupation", label: "Zaměstnání" },
+  { key: "nationality", label: "Národnost" },
+  { key: "education", label: "Vzdělání" },
+  { key: "device", label: "Device" },
+];
+
+function renderGroupEditMetricsPicker() {
+  const el = $("#groupEditMetricsPicker");
+  if (!el) return;
+  const selected = new Set(state.groupEditMetrics ?? []);
+  el.innerHTML = GROUP_EDIT_METRIC_OPTIONS.map((m) => {
+    const active = selected.has(m.key) ? "is-selected" : "";
+    return `<button class="chip ${active}" type="button" data-role="group-edit-metric" data-key="${escapeHtml(m.key)}">${escapeHtml(m.label)}</button>`;
+  }).join("");
+
+  $$("#groupEditMetricsPicker [data-role='group-edit-metric']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.key;
+      const set = new Set(state.groupEditMetrics ?? []);
+      if (set.has(key)) set.delete(key);
+      else set.add(key);
+      state.groupEditMetrics = GROUP_EDIT_METRIC_OPTIONS.map((x) => x.key).filter((k) => set.has(k));
+      renderGroupEditMetricsPicker();
+      renderGroupEditSessionMetrics();
+    });
+  });
+}
+
+function renderGroupEditSessionMetrics() {
+  const el = $("#groupEditSessionMetrics");
+  if (!el) return;
+
+  const sessions = getGroupEditCurrentGroupSessions();
+  const selectedId = state.groupEditSelectedSessionId;
+  const selected = sessions.find((s) => s.session_id === selectedId) ?? null;
+  if (!selected) {
+    el.innerHTML = `<div class="empty"><div class="empty-title">Vyber session vlevo</div></div>`;
+    return;
+  }
+
+  const st = selected.stats?.session ?? {};
+  const soc = st.soc_demo ?? {};
+  const answersSummary = selected.stats?.answers_eval?.summary ?? {};
+  const mapping = {
+    tasks: ["Počet tasků", st.tasks_count ?? (Array.isArray(selected.tasks) ? selected.tasks.length : "—")],
+    events: ["Počet eventů", st.events_total ?? "—"],
+    duration: ["Celkový čas řešení", fmtMs(st.duration_ms)],
+    accuracy: ["Průměrná správnost odpovědí", fmtPercent(answersSummary.accuracy)],
+    age: ["Věk", soc.age ?? "—"],
+    gender: ["Pohlaví", soc.gender ?? "—"],
+    occupation: ["Zaměstnání", soc.occupation ?? "—"],
+    nationality: ["Národnost", soc.nationality ?? "—"],
+    education: ["Vzdělání", soc.education ?? "—"],
+    device: ["Device", soc.device ?? "—"],
+  };
+
+  const rows = { UserID: selected.user_id ?? "—" };
+  for (const key of (state.groupEditMetrics ?? [])) {
+    const metric = mapping[key];
+    if (metric) rows[metric[0]] = metric[1];
+  }
+  renderMetricGrid(rows, el);
 }
 
 function renderGroupEditSessionsList() {
   const listEl = $("#groupEditSessionsList");
   const summaryEl = $("#groupEditSummary");
-  const sessions = getSessionsForSelectedTest();
   if (!listEl) return;
 
+  const sessions = getGroupEditCurrentGroupSessions();
   renderGroupEditFilterControls(sessions);
-  const filtered = applyGenericSessionFilters(sessions, state.groupEditFilters);
+  const filtered = getGroupEditFilteredSessions();
   const selectedSet = new Set(state.groupEditSessionIds ?? []);
-  const sorted = filtered.slice().sort((a, b) => {
-    const aSel = selectedSet.has(a.session_id) ? 1 : 0;
-    const bSel = selectedSet.has(b.session_id) ? 1 : 0;
-    if (aSel !== bSel) return bSel - aSel;
-    return String(a.user_id ?? "").localeCompare(String(b.user_id ?? ""), "cs", { sensitivity: "base" });
-  });
+  const flaggedSet = new Set(state.groupEditFlaggedSessionIds ?? []);
 
-  const selectedCount = sessions.filter((x) => selectedSet.has(x.session_id)).length;
-  if (summaryEl) summaryEl.textContent = `Zobrazeno ${sorted.length} z ${sessions.length} · Vybráno ${selectedCount}`;
+  if (summaryEl) {
+    const selectedCount = sessions.filter((x) => selectedSet.has(x.session_id)).length;
+    const flaggedCount = sessions.filter((x) => flaggedSet.has(x.session_id)).length;
+    summaryEl.textContent = `Zobrazeno ${filtered.length} z ${sessions.length} · Vybráno ${selectedCount} · ! ${flaggedCount}`;
+  }
 
-  if (!sorted.length) {
+  if (!filtered.length) {
     listEl.innerHTML = `<div class="empty"><div class="empty-title">Žádná session neodpovídá filtru</div></div>`;
+    renderGroupEditSessionMetrics();
     return;
   }
 
-  listEl.innerHTML = sorted.map((s) => {
+  listEl.innerHTML = filtered.map((s) => {
     const checked = selectedSet.has(s.session_id) ? "checked" : "";
+    const flagged = flaggedSet.has(s.session_id) ? "is-selected" : "";
+    const active = state.groupEditSelectedSessionId === s.session_id ? "is-selected" : "";
     return `
-      <label class="list-item" style="cursor:default;">
-        <div class="row" style="justify-content:flex-start; gap:10px;">
-          <input type="checkbox" data-role="group-edit-session" data-session="${escapeHtml(s.session_id)}" ${checked} />
-          <div>
-            <div class="title">${escapeHtml(s.user_id ?? "—")}</div>
-            <div class="muted small">session: ${escapeHtml(s.session_id)}</div>
-          </div>
+      <div class="list-item ${active}" data-role="group-edit-item" data-session="${escapeHtml(s.session_id)}" style="cursor:default;">
+        <div class="row" style="justify-content:space-between; align-items:flex-start; gap:8px;">
+          <label class="row" style="justify-content:flex-start; gap:10px; cursor:pointer;">
+            <input type="checkbox" data-role="group-edit-session" data-session="${escapeHtml(s.session_id)}" ${checked} />
+            <div>
+              <div class="title">${escapeHtml(s.user_id ?? "—")}</div>
+              <div class="muted small">session: ${escapeHtml(s.session_id)}</div>
+            </div>
+          </label>
+          <button class="btn btn-ghost ${flagged}" data-role="group-edit-flag" data-session="${escapeHtml(s.session_id)}" type="button" title="Označit !">!</button>
         </div>
-      </label>
+      </div>
     `;
   }).join("");
 
-    $$("#groupEditSessionsList input[data-role='group-edit-session']").forEach((input) => {
+    $$("#groupEditSessionsList [data-role='group-edit-item']").forEach((item) => {
+    item.addEventListener("click", (e) => {
+      if (e.target?.closest?.("input,button")) return;
+      state.groupEditSelectedSessionId = item.dataset.session ?? null;
+      renderGroupEditSessionsList();
+    });
+  });
+
+  $$("#groupEditSessionsList input[data-role='group-edit-session']").forEach((input) => {
     input.addEventListener("change", () => {
       const sid = input.dataset.session;
-      if (!sid) return;
       const set = new Set(state.groupEditSessionIds ?? []);
-      if (input.checked) set.add(sid);
-      else set.delete(sid);
+      if (input.checked) set.add(sid); else set.delete(sid);
       state.groupEditSessionIds = Array.from(set);
       renderGroupEditSessionsList();
     });
   });
+
+  $$("#groupEditSessionsList button[data-role='group-edit-flag']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const sid = btn.dataset.session;
+      const set = new Set(state.groupEditFlaggedSessionIds ?? []);
+      if (set.has(sid)) set.delete(sid); else set.add(sid);
+      state.groupEditFlaggedSessionIds = Array.from(set);
+      renderGroupEditSessionsList();
+    });
+  });
+
+  renderGroupEditSessionMetrics();
 }
 
 function wireGroupEditFilters() {
-  const genderEl = $("#groupEditFilterGender");
-  const occupationEl = $("#groupEditFilterOccupation");
-  const nationalityEl = $("#groupEditFilterNationality");
-  const ageMinEl = $("#groupEditFilterAgeMin");
-  const ageMaxEl = $("#groupEditFilterAgeMax");
-  const searchEl = $("#groupEditSearchInput");
+  const ids = ["#groupEditFilterGender", "#groupEditFilterOccupation", "#groupEditFilterNationality", "#groupEditFilterAgeMin", "#groupEditFilterAgeMax", "#groupEditSearchInput"];
   const selectAllBtn = $("#groupEditSelectAllBtn");
   const clearBtn = $("#groupEditClearFiltersBtn");
 
-  if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !searchEl || !selectAllBtn || !clearBtn) return;
+  const onlyFlagged = $("#groupEditOnlyFlagged");
 
   const update = () => {
-    state.groupEditFilters.gender = genderEl.value;
-    state.groupEditFilters.occupation = occupationEl.value;
-    state.groupEditFilters.nationality = nationalityEl.value;
-    state.groupEditFilters.ageMin = ageMinEl.value;
-    state.groupEditFilters.ageMax = ageMaxEl.value;
-    state.groupEditFilters.query = searchEl.value;
+    state.groupEditFilters.gender = $("#groupEditFilterGender")?.value ?? "";
+    state.groupEditFilters.occupation = $("#groupEditFilterOccupation")?.value ?? "";
+    state.groupEditFilters.nationality = $("#groupEditFilterNationality")?.value ?? "";
+    state.groupEditFilters.ageMin = $("#groupEditFilterAgeMin")?.value ?? "";
+    state.groupEditFilters.ageMax = $("#groupEditFilterAgeMax")?.value ?? "";
+    state.groupEditFilters.query = $("#groupEditSearchInput")?.value ?? "";
+    state.groupEditShowOnlyFlagged = !!onlyFlagged?.checked;
     renderGroupEditSessionsList();
   };
 
-  [genderEl, occupationEl, nationalityEl].forEach((el) => el.addEventListener("change", update));
-  [ageMinEl, ageMaxEl, searchEl].forEach((el) => el.addEventListener("input", update));
+  ids.forEach((sel) => $(sel)?.addEventListener(sel.includes("Age") || sel.includes("Search") ? "input" : "change", update));
+  onlyFlagged?.addEventListener("change", update);
 
-  selectAllBtn.addEventListener("click", () => {
-    const sessions = getSessionsForSelectedTest();
-    const filtered = applyGenericSessionFilters(sessions, state.groupEditFilters);
+  selectAllBtn?.addEventListener("click", () => {
     const set = new Set(state.groupEditSessionIds ?? []);
-    filtered.forEach((s) => set.add(s.session_id));
+    getGroupEditFilteredSessions().forEach((s) => set.add(s.session_id));
     state.groupEditSessionIds = Array.from(set);
     renderGroupEditSessionsList();
   });
 
-  clearBtn.addEventListener("click", () => {
+  clearBtn?.addEventListener("click", () => {
     state.groupEditFilters = { gender: "", ageMin: "", ageMax: "", occupation: "", nationality: "", query: "" };
+    state.groupEditShowOnlyFlagged = false;
     renderGroupEditSessionsList();
   });
 }
@@ -3452,21 +3564,26 @@ function openGroupEditModal() {
   const group = getSelectedGroup();
   if (!group) return;
 
-  const selected = new Set(group.session_ids ?? []);
-  state.groupEditSessionIds = Array.from(selected);
+  state.groupEditSessionIds = [];
+  state.groupEditFlaggedSessionIds = [];
+  state.groupEditSelectedSessionId = (group.session_ids ?? [])[0] ?? null;
   state.groupEditTab = "sessions";
   state.groupEditFilters = { gender: "", ageMin: "", ageMax: "", occupation: "", nationality: "", query: "" };
+  state.groupEditShowOnlyFlagged = false;
 
   const nameInput = $("#groupEditNameInput");
   if (nameInput) nameInput.value = group.name ?? "";
   const noteInput = $("#groupEditNoteInput");
   if (noteInput) noteInput.value = String(group.note ?? "");
+  const subtitle = $("#groupEditPageSubtitle");
+  if (subtitle) subtitle.textContent = `Skupina: ${group.name ?? "—"} (${(group.session_ids ?? []).length} sessions)`;
 
   const statusEl = $("#groupEditStatus");
   if (statusEl) statusEl.textContent = "";
   renderGroupEditPanels();
+  renderGroupEditMetricsPicker();
   renderGroupEditSessionsList();
-  show($("#groupEditModal"));
+  setPage("group-edit");
 }
 
 function renderGroupEditPanels() {
@@ -3475,13 +3592,75 @@ function renderGroupEditPanels() {
     btn.classList.toggle("is-active", active);
     btn.setAttribute("aria-selected", active ? "true" : "false");
   });
-  $$("#groupEditModal [data-group-edit-panel]").forEach((panel) => {
+  $$("#view-group-edit [data-group-edit-panel]").forEach((panel) => {
     panel.classList.toggle("hidden", panel.dataset.groupEditPanel !== state.groupEditTab);
   });
 }
 
 function closeGroupEditModal() {
-  hide($("#groupEditModal"));
+  setPage("groups");
+}
+
+function openGroupSplitModal() {
+  const statusEl = $("#groupSplitStatus");
+  const selected = state.groupEditSessionIds ?? [];
+  if (!selected.length) {
+    const mainStatus = $("#groupEditStatus");
+    if (mainStatus) mainStatus.textContent = "Vyber aspoň jednu session pro novou skupinu.";
+    return;
+  }
+  if (statusEl) statusEl.textContent = `Vybráno sessions: ${selected.length}`;
+  const input = $("#groupSplitNameInput");
+  if (input) input.value = "";
+  show($("#groupSplitModal"));
+}
+
+function closeGroupSplitModal() {
+  hide($("#groupSplitModal"));
+}
+
+async function createGroupFromEditSelection() {
+  const group = getSelectedGroup();
+  const name = String($("#groupSplitNameInput")?.value ?? "").trim();
+  const statusEl = $("#groupSplitStatus");
+  const selected = state.groupEditSessionIds ?? [];
+  if (!group || !name || !selected.length) {
+    if (statusEl) statusEl.textContent = "Vyplň název a vyber sessions.";
+    return;
+  }
+  try {
+    if (statusEl) statusEl.textContent = "Vytvářím skupinu…";
+    await apiCreateGroup({ name, test_id: group.test_id, session_ids: selected });
+    await refreshGroups();
+    if (statusEl) statusEl.textContent = "Hotovo";
+    closeGroupSplitModal();
+    renderGroupsPage();
+  } catch (e) {
+    if (statusEl) statusEl.textContent = `Chyba: ${e?.message ?? e}`;
+  }
+}
+
+async function deleteFlaggedFromGroup() {
+  const group = getSelectedGroup();
+  const statusEl = $("#groupEditStatus");
+  if (!group) return;
+  const flagged = new Set(state.groupEditFlaggedSessionIds ?? []);
+  if (!flagged.size) {
+    if (statusEl) statusEl.textContent = "Nejsou označené žádné sessions (!).";
+    return;
+  }
+  const remaining = (group.session_ids ?? []).filter((sid) => !flagged.has(sid));
+  try {
+    if (statusEl) statusEl.textContent = "Odebírám označené ze skupiny…";
+    await apiUpdateGroup(group.id, { name: group.name, test_id: group.test_id, session_ids: remaining });
+    await refreshGroups();
+    state.groupEditFlaggedSessionIds = [];
+    state.groupEditSelectedSessionId = remaining[0] ?? null;
+    renderGroupEditSessionsList();
+    if (statusEl) statusEl.textContent = "Odebráno ze skupiny.";
+  } catch (e) {
+    if (statusEl) statusEl.textContent = `Chyba: ${e?.message ?? e}`;
+  }
 }
 
 function getGroupsForComparison() {
@@ -3599,10 +3778,11 @@ async function saveGroupEdit() {
 
   try {
     if (statusEl) statusEl.textContent = "Ukládám změny…";
+    const current = getSelectedGroup();
     await apiUpdateGroup(group.id, {
       name: group.name,
       test_id: group.test_id,
-      session_ids: state.groupEditSessionIds ?? [],
+      session_ids: current?.session_ids ?? group.session_ids ?? [],
     });
     const updatedSettings = await apiUpdateGroupSettings(group.id, {
       name: String($("#groupEditNameInput")?.value ?? "").trim() || group.name,
@@ -3759,6 +3939,11 @@ function wireNavButtons() {
     renderSessionMetrics();
   });
 
+  $("#backFromGroupEditBtn")?.addEventListener("click", () => {
+    setPage("groups");
+    renderGroupsPage();
+  });
+
   $("#createGroupBtn")?.addEventListener("click", () => {
     openCreateGroupModal();
   });
@@ -3827,6 +4012,8 @@ function wireNavButtons() {
   });
 
   $("#deleteGroupBtn")?.addEventListener("click", deleteCurrentGroup);
+  $("#groupEditCreateGroupFromSelectedBtn")?.addEventListener("click", openGroupSplitModal);
+  $("#groupEditDeleteFlaggedBtn")?.addEventListener("click", deleteFlaggedFromGroup);
 
   //Timeline button (on "Úlohy v session" page, right column)
   $("#openTimelineBtn")?.addEventListener("click", () => {
@@ -3875,11 +4062,12 @@ function wireModal() {
   $("#cancelGroupCreateBtn")?.addEventListener("click", closeCreateGroupModal);
   $("#groupCreateBackdrop")?.addEventListener("click", closeCreateGroupModal);
   $("#saveGroupBtn")?.addEventListener("click", saveCreatedGroup);
-
-  $("#closeGroupEditBtn")?.addEventListener("click", closeGroupEditModal);
-  $("#cancelGroupEditBtn")?.addEventListener("click", closeGroupEditModal);
-  $("#groupEditBackdrop")?.addEventListener("click", closeGroupEditModal);
   $("#saveGroupEditBtn")?.addEventListener("click", saveGroupEdit);
+  $("#closeGroupSplitBtn")?.addEventListener("click", closeGroupSplitModal);
+  $("#cancelGroupSplitBtn")?.addEventListener("click", closeGroupSplitModal);
+  $("#groupSplitBackdrop")?.addEventListener("click", closeGroupSplitModal);
+  $("#confirmGroupSplitBtn")?.addEventListener("click", createGroupFromEditSelection);
+  
   $("#closeTimelineBtn2")?.addEventListener("click", closeTimelineModal);
   $("#timelineModalBackdrop")?.addEventListener("click", closeTimelineModal);
 
@@ -3945,9 +4133,6 @@ function wireModal() {
 
       const modal4 = $("#groupCreateModal");
       if (modal4 && !modal4.classList.contains("hidden")) closeCreateGroupModal();
-
-      const modal5 = $("#groupEditModal");
-      if (modal5 && !modal5.classList.contains("hidden")) closeGroupEditModal();
 
       const modal6 = $("#groupsCompareModal");
       if (modal6 && !modal6.classList.contains("hidden")) closeGroupCompareModal();

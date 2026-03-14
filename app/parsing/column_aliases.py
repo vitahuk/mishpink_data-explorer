@@ -19,6 +19,7 @@ SOC_DEMO_COLUMN_ALIASES = {
     "occupation": {"occupation", "job", "employment", "zamestnani", "zamestnání", "profese"},
     "education": {"education", "vzdelani", "vzdělání", "schooling"},
     "nationality": {"nationality", "narodnost", "národnost", "nation", "country", "citizenship", "statniobcanstvi"},
+    "device": {"device", "zarizeni", "zařízení", "device_type", "devicetype", "platform"},
 }
 
 
