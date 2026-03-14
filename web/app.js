@@ -79,6 +79,10 @@ const state = {
   selectedGroupCompareIds: [],
   groupsSearchQuery: "",
   groupCompareTab: "summary",
+  groupCompareChartDimension: "nationality",
+  groupCompareChartSortMode: "overall",
+  groupCompareChartReferenceGroupId: null,
+  groupCompareChartColors: {},
   groupCompareSort: { key: "avgDurationMs", direction: "desc" },
   groupTaskSearchQuery: "",
   selectedGroupCompareTaskId: null,
@@ -827,6 +831,7 @@ function renderSessionMetrics() {
     "Occupation": soc.occupation ?? "—",
     "Education": soc.education ?? "—",
     "Nationality": soc.nationality ?? "—",
+    "Device": soc.device ?? "—",
   }, el);
 
   if (btn) btn.disabled = false;
@@ -2868,7 +2873,7 @@ function renderCompareTable({ rows, sort }) {
               <td>${escapeHtml(row.groupName)}</td>
               <td>${escapeHtml(fmtMs(row.avgDurationMs))}</td>
               <td>${escapeHtml(fmtMs(row.medianDurationMs))}</td>
-              td>${escapeHtml(fmtPercent(row.avgCorrectness))}</td>
+              <td>${escapeHtml(fmtPercent(row.avgCorrectness))}</td>
               <td>${escapeHtml(row.avgAge === null ? "—" : row.avgAge.toFixed(1))}</td>
             </tr>
           `).join("")}
@@ -2883,6 +2888,314 @@ function toggleSort(currentSort, key) {
     return { key, direction: currentSort.direction === "asc" ? "desc" : "asc" };
   }
   return { key, direction: "desc" };
+}
+
+const GROUP_COMPARE_DIMENSIONS = {
+  nationality: { label: "Národnost", key: "nationality" },
+};
+
+const GROUP_COMPARE_COLOR_PALETTE = [
+  "#4cc9f0", "#f72585", "#4361ee", "#f77f00", "#2a9d8f",
+  "#ff006e", "#06d6a0", "#ffd166", "#8338ec", "#ef476f",
+  "#00bbf9", "#90be6d", "#fb5607", "#7209b7", "#3a86ff",
+];
+
+function getGroupCompareColor(groupId, index = 0) {
+  if (!groupId) return GROUP_COMPARE_COLOR_PALETTE[index % GROUP_COMPARE_COLOR_PALETTE.length];
+  const saved = state.groupCompareChartColors?.[groupId];
+  if (saved) return saved;
+  return GROUP_COMPARE_COLOR_PALETTE[index % GROUP_COMPARE_COLOR_PALETTE.length];
+}
+
+function getGroupDimensionAccuracyMap(group, dimensionKey) {
+  const map = new Map();
+  const sessions = Array.isArray(group?.sessions) ? group.sessions : [];
+
+  sessions.forEach((session) => {
+    const soc = session?.stats?.session?.soc_demo ?? {};
+    const rawCategory = soc?.[dimensionKey];
+    const accuracy = Number(session?.stats?.answers_eval?.summary?.accuracy);
+    if (!Number.isFinite(accuracy)) return;
+
+    const category = String(rawCategory ?? "Nezadáno").trim() || "Nezadáno";
+    if (!map.has(category)) map.set(category, []);
+    map.get(category).push(accuracy * 100);
+  });
+
+  return new Map(Array.from(map.entries()).map(([category, values]) => {
+    const avg = values.length ? values.reduce((sum, val) => sum + val, 0) / values.length : null;
+    return [category, avg];
+  }));
+}
+
+function buildGroupCompareChartData(groups) {
+  const dimensionCfg = GROUP_COMPARE_DIMENSIONS[state.groupCompareChartDimension] ?? GROUP_COMPARE_DIMENSIONS.nationality;
+  const categorySet = new Set();
+  const series = (groups ?? []).map((group, index) => {
+    const pointsByCategory = getGroupDimensionAccuracyMap(group, dimensionCfg.key);
+    Array.from(pointsByCategory.keys()).forEach((category) => categorySet.add(category));
+    return {
+      groupId: group.id,
+      groupName: group.name ?? group.id,
+      color: getGroupCompareColor(group.id, index),
+      pointsByCategory,
+    };
+  });
+
+  const categories = Array.from(categorySet);
+  const sortBy = state.groupCompareChartSortMode;
+  const refGroupId = state.groupCompareChartReferenceGroupId;
+
+  const scoreForCategory = (category) => {
+    if (sortBy === "reference" && refGroupId) {
+      const refSeries = series.find((s) => s.groupId === refGroupId);
+      const refValue = refSeries?.pointsByCategory?.get(category);
+      if (Number.isFinite(refValue)) return refValue;
+    }
+    const vals = series
+      .map((s) => s.pointsByCategory.get(category))
+      .filter((v) => Number.isFinite(v));
+    if (!vals.length) return -Infinity;
+    return vals.reduce((sum, val) => sum + val, 0) / vals.length;
+  };
+
+  categories.sort((a, b) => {
+    const scoreDiff = scoreForCategory(b) - scoreForCategory(a);
+    if (scoreDiff !== 0) return scoreDiff;
+    return a.localeCompare(b, "cs");
+  });
+
+  return {
+    xAxisLabel: dimensionCfg.label,
+    categories,
+    series,
+  };
+}
+
+function computeSnappedOffsets(series, categories) {
+  const result = new Map();
+  const tolerance = 0.2;
+  const step = 1;
+
+  categories.forEach((category) => {
+    const entries = series.map((item) => {
+      const value = item.pointsByCategory.get(category);
+      return { groupId: item.groupId, value };
+    }).filter((entry) => Number.isFinite(entry.value));
+
+    entries.sort((a, b) => a.value - b.value);
+    const clusters = [];
+    entries.forEach((entry) => {
+      const lastCluster = clusters[clusters.length - 1];
+      if (!lastCluster || Math.abs(lastCluster.base - entry.value) > tolerance) {
+        clusters.push({ base: entry.value, entries: [entry] });
+      } else {
+        lastCluster.entries.push(entry);
+      }
+    });
+
+    clusters.forEach((cluster) => {
+      const size = cluster.entries.length;
+      cluster.entries.forEach((entry, idx) => {
+        const relative = idx - (size - 1) / 2;
+        const offset = size > 1 ? relative * step : 0;
+        result.set(`${entry.groupId}::${category}`, offset);
+      });
+    });
+  });
+
+  return result;
+}
+
+function renderGroupCompareChartTab(groups) {
+  const wrap = $("#groupsCompareChartWrap");
+  if (!wrap) return;
+
+  if (!groups.length) {
+    wrap.innerHTML = `<div class="empty"><div class="empty-title">Nejsou vybrané skupiny</div><div class="muted small">Na stránce Skupiny označ skupiny pro srovnání.</div></div>`;
+    return;
+  }
+
+  if (!groups.some((g) => g.id === state.groupCompareChartReferenceGroupId)) {
+    state.groupCompareChartReferenceGroupId = groups[0]?.id ?? null;
+  }
+
+  const chartData = buildGroupCompareChartData(groups);
+
+  if (!chartData.categories.length || !chartData.series.length) {
+    wrap.innerHTML = `<div class="empty"><div class="empty-title">Nedostatek dat pro vykreslení</div><div class="muted small">Zvol jiné skupiny nebo dimenzi na ose X.</div></div>`;
+    return;
+  }
+
+  const controlsHtml = `
+    <div class="compare-chart-controls">
+      <label class="filter-field" style="min-width:220px; margin:0;">
+        <span>Dimenze osy X</span>
+        <select id="groupCompareChartDimensionSelect">
+          ${Object.entries(GROUP_COMPARE_DIMENSIONS).map(([key, cfg]) => `<option value="${escapeHtml(key)}" ${state.groupCompareChartDimension === key ? "selected" : ""}>${escapeHtml(cfg.label)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="filter-field" style="min-width:220px; margin:0;">
+        <span>Řazení osy X</span>
+        <select id="groupCompareChartSortModeSelect">
+          <option value="overall" ${state.groupCompareChartSortMode === "overall" ? "selected" : ""}>Dle průměru všech skupin</option>
+          <option value="reference" ${state.groupCompareChartSortMode === "reference" ? "selected" : ""}>Dle referenční skupiny</option>
+        </select>
+      </label>
+      <label class="filter-field" style="min-width:220px; margin:0; ${state.groupCompareChartSortMode === "reference" ? "" : "opacity:.55;"}">
+        <span>Referenční skupina</span>
+        <select id="groupCompareChartReferenceSelect" ${state.groupCompareChartSortMode === "reference" ? "" : "disabled"}>
+          ${groups.map((group) => `<option value="${escapeHtml(group.id)}" ${state.groupCompareChartReferenceGroupId === group.id ? "selected" : ""}>${escapeHtml(group.name ?? group.id)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+    <div class="compare-chart-group-controls" id="groupCompareSeriesControls">
+      ${chartData.series.map((item) => {
+        return `
+          <label class="compare-chart-series-control" data-group-id="${escapeHtml(item.groupId)}">
+            <span>${escapeHtml(item.groupName)}</span>
+            <input type="color" data-role="series-color" data-group-id="${escapeHtml(item.groupId)}" value="${escapeHtml(item.color)}" />
+          </label>
+        `;
+      }).join("")}
+    </div>
+  `;
+
+  const width = 820;
+  const height = 352;
+  const margin = { top: 30, right: 16, bottom: 76, left: 52 };
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+  const xStep = chartData.categories.length > 1 ? innerW / (chartData.categories.length - 1) : 0;
+
+  const xForIndex = (index) => margin.left + (chartData.categories.length === 1 ? innerW / 2 : index * xStep);
+  const yForValue = (value) => margin.top + ((100 - Math.max(0, Math.min(100, value))) / 100) * innerH;
+  const offsets = computeSnappedOffsets(chartData.series, chartData.categories);
+
+  const gridLines = [0, 25, 50, 75, 100].map((value) => {
+    const y = yForValue(value);
+    return `
+      <line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" class="compare-chart-grid" />
+      <text x="${margin.left - 10}" y="${y + 4}" class="compare-chart-y-label">${value} %</text>
+    `;
+  }).join("");
+
+  const seriesSvg = chartData.series.map((item) => {
+    const pathParts = [];
+    const points = [];
+    chartData.categories.forEach((category, idx) => {
+      const baseValue = item.pointsByCategory.get(category);
+      if (!Number.isFinite(baseValue)) return;
+      const offset = offsets.get(`${item.groupId}::${category}`) ?? 0;
+      const yValue = baseValue + offset;
+      const x = xForIndex(idx);
+      const y = yForValue(yValue);
+      pathParts.push(`${pathParts.length ? "L" : "M"} ${x} ${y}`);
+      points.push({ x, y, baseValue, category, offset });
+    });
+
+    if (!points.length) return "";
+
+    return `
+      <g>
+        <path d="${pathParts.join(" ")}" fill="none" stroke="${escapeHtml(item.color)}" stroke-width="2.3" stroke-linejoin="round" stroke-linecap="round" />
+        ${points.map((p) => `
+          <circle cx="${p.x}" cy="${p.y}" r="4.5" fill="${escapeHtml(item.color)}" class="compare-chart-point" data-group="${escapeHtml(item.groupName)}" data-category="${escapeHtml(p.category)}" data-value="${escapeHtml(`${p.baseValue.toFixed(1)} %`)}" data-offset="${escapeHtml(p.offset ? `${p.offset > 0 ? "+" : ""}${p.offset.toFixed(2)} p. b.` : "0.00 p. b.")}" data-plot-x="${p.x}" data-plot-y="${p.y}" />
+        `).join("")}
+      </g>
+    `;
+  }).join("");
+
+  const xLabels = chartData.categories.map((category, idx) => {
+    const x = xForIndex(idx);
+    return `<text x="${x}" y="${height - 22}" class="compare-chart-x-label">${escapeHtml(category)}</text>`;
+  }).join("");
+
+  wrap.innerHTML = `
+    ${controlsHtml}
+    <div class="compare-chart-legend" id="groupCompareChartLegend">
+      ${chartData.series.map((item) => `
+        <div class="compare-chart-legend-item" title="${escapeHtml(item.groupName)}">
+          <span class="compare-chart-legend-line" style="background:${escapeHtml(item.color)}"></span>
+          <span>${escapeHtml(item.groupName)}</span>
+        </div>
+      `).join("")}
+    </div>
+    <div class="compare-chart-canvas-wrap">
+      <svg viewBox="0 0 ${width} ${height}" class="compare-chart-svg" role="img" aria-label="Srovnání správnosti odpovědí mezi skupinami">
+        <text x="${width / 2}" y="18" class="compare-chart-title">Správnost odpovědí (%)</text>
+        ${gridLines}
+        <line x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${height - margin.bottom}" class="compare-chart-axis" />
+        <line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" class="compare-chart-axis" />
+        ${seriesSvg}
+        ${xLabels}
+      </svg>
+      <div class="compare-chart-tooltip hidden" id="groupCompareChartTooltip"></div>
+    </div>
+    <div class="muted small">Stejné (nebo téměř stejné) hodnoty se automaticky seskupují a dostávají drobný vizuální offset, aby se body nepřekrývaly.</div>
+  `;
+
+  const rerender = () => renderGroupCompareModal();
+  $("#groupCompareChartDimensionSelect")?.addEventListener("change", (e) => {
+    state.groupCompareChartDimension = e.target.value;
+    rerender();
+  });
+  $("#groupCompareChartSortModeSelect")?.addEventListener("change", (e) => {
+    state.groupCompareChartSortMode = e.target.value;
+    rerender();
+  });
+  $("#groupCompareChartReferenceSelect")?.addEventListener("change", (e) => {
+    state.groupCompareChartReferenceGroupId = e.target.value;
+    rerender();
+  });
+
+  $$("#groupCompareSeriesControls [data-role='series-color']").forEach((input) => {
+    input.addEventListener("change", () => {
+      const groupId = input.dataset.groupId;
+      if (!groupId) return;
+      state.groupCompareChartColors = { ...state.groupCompareChartColors, [groupId]: input.value };
+      rerender();
+    });
+  });
+
+  const tooltip = $("#groupCompareChartTooltip");
+  const chartWrap = $(".compare-chart-canvas-wrap");
+  const svgEl = chartWrap?.querySelector(".compare-chart-svg");
+
+  const positionTooltipNearPoint = (pointEl) => {
+    if (!tooltip || !chartWrap || !svgEl || !pointEl) return;
+    const chartRect = chartWrap.getBoundingClientRect();
+    const svgRect = svgEl.getBoundingClientRect();
+    const px = Number(pointEl.dataset.plotX);
+    const py = Number(pointEl.dataset.plotY);
+    if (!Number.isFinite(px) || !Number.isFinite(py)) return;
+
+    const scaleX = svgRect.width / width;
+    const scaleY = svgRect.height / height;
+    const left = (svgRect.left - chartRect.left) + (px * scaleX) + 12;
+    const top = (svgRect.top - chartRect.top) + (py * scaleY) - 16;
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${Math.max(8, top)}px`;
+  };
+
+  $$(".compare-chart-point").forEach((point) => {
+    point.addEventListener("mouseenter", () => {
+      if (!tooltip || !chartWrap) return;
+      tooltip.classList.remove("hidden");
+      tooltip.innerHTML = `
+        <div><strong>${escapeHtml(point.dataset.group ?? "")}</strong></div>
+        <div>${escapeHtml(point.dataset.category ?? "")}: <strong>${escapeHtml(point.dataset.value ?? "")}</strong></div>
+        <div class="muted small">Offset (snapping): ${escapeHtml(point.dataset.offset ?? "0.00 p. b.")}</div>
+      `;
+      positionTooltipNearPoint(point);
+    });
+    point.addEventListener("mousemove", () => {
+      positionTooltipNearPoint(point);
+    });
+    point.addEventListener("mouseleave", () => {
+      tooltip?.classList.add("hidden");
+    });
+  });
 }
 
 function computeNumericStats(values) {
@@ -3757,6 +4070,7 @@ function renderGroupCompareModal() {
   });
 
   renderGroupCompareSummaryTab(groups);
+  renderGroupCompareChartTab(groups);
   renderGroupCompareTaskTab(groups);
   renderGroupCompareAnswersTab(groups);
 }

@@ -303,6 +303,7 @@ class DatabaseStore:
 
         with SessionLocal() as db:
             _ensure_test(db, normalized_test_id)
+            db.flush()
 
             existing = db.get(SessionRecord, session.session_id)
             if existing:
@@ -610,6 +611,13 @@ def delete_test(test_id: str) -> bool:
         row = db.get(TestRecord, normalized_test_id)
         if not row:
             return False
+        
+        session_rows = db.execute(
+            select(SessionRecord).where(SessionRecord.test_id == normalized_test_id)
+        ).scalars().all()
+        for session_row in session_rows:
+            db.delete(session_row)
+
         db.delete(row)
         db.commit()
         return True
