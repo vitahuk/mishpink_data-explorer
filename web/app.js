@@ -166,7 +166,6 @@ function loadTestsFromStorage() {
     tests = [];
   }
 
-  if (!tests.length) tests = ["TEST"];
   tests = Array.from(new Set(tests));
   saveTestsToStorage(tests);
   return tests;
@@ -188,12 +187,13 @@ function loadSelectedTestFromStorage(tests) {
   } catch {
     /* ignore */
   }
-  return tests[0] ?? "TEST";
+  return tests[0] ?? null;
 }
 
 function saveSelectedTestToStorage(testId) {
   try {
-    localStorage.setItem(SELECTED_TEST_STORAGE_KEY, testId);
+    if (testId === null || testId === undefined) localStorage.removeItem(SELECTED_TEST_STORAGE_KEY);
+    else localStorage.setItem(SELECTED_TEST_STORAGE_KEY, testId);
   } catch {
     /* ignore */
   }
@@ -202,19 +202,19 @@ function saveSelectedTestToStorage(testId) {
 function syncTestsWithSessions(sessions) {
   const seen = new Set(state.tests);
   sessions.forEach((s) => {
-    const testId = normalizeTestId(s.test_id) ?? "TEST";
-    if (!seen.has(testId)) {
-      seen.add(testId);
-      state.tests.push(testId);
-    }
+    const testId = normalizeTestId(s.test_id);
+    if (!testId || seen.has(testId)) return;
+    seen.add(testId);
+    state.tests.push(testId);
   });
   state.tests = Array.from(new Set(state.tests));
   saveTestsToStorage(state.tests);
 }
 
 function getSessionsForSelectedTest() {
-  const testId = state.selectedTestId ?? "TEST";
-  return state.sessions.filter((s) => (s.test_id ?? "TEST") === testId);
+  const testId = normalizeTestId(state.selectedTestId);
+  if (!testId) return [];
+  return state.sessions.filter((s) => normalizeTestId(s.test_id) === testId);
 }
 
 function persistGroupDraftSelection() {
@@ -440,6 +440,10 @@ async function apiGetGroupAnswers(groupId) {
 async function apiGetGroupWordcloud(groupId, taskId = null) {
   const q = taskId ? `?task_id=${encodeURIComponent(taskId)}` : "";
   return apiGet(`/api/groups/${encodeURIComponent(groupId)}/wordcloud${q}`);
+}
+
+function apiGetGroupExportCsvUrl(groupId) {
+  return `/api/groups/${encodeURIComponent(groupId)}/export-csv`;
 }
 
 async function apiCompareWordcloud(groupIds, taskId = null) {
@@ -925,13 +929,12 @@ async function loadTestsCatalogFromBackend() {
       .map((row) => normalizeTestId(row?.id))
       .filter(Boolean);
 
-    if (ids.length) {
-      state.tests = Array.from(new Set(ids));
-      saveTestsToStorage(state.tests);
-      if (!state.tests.includes(state.selectedTestId)) {
-        state.selectedTestId = state.tests[0] ?? "TEST";
-        saveSelectedTestToStorage(state.selectedTestId);
-      }
+    state.tests = Array.from(new Set(ids));
+    saveTestsToStorage(state.tests);
+
+    if (!state.tests.includes(state.selectedTestId)) {
+      state.selectedTestId = state.tests[0] ?? null;
+      saveSelectedTestToStorage(state.selectedTestId);
     }
 
     tests.forEach((row) => {
@@ -1258,7 +1261,7 @@ async function confirmDeleteSettingsSessions() {
 }
 
 async function saveUserTestSettings() {
-  const testId = state.selectedTestId ?? "TEST";
+  const previousTestId = state.selectedTestId ?? "TEST";
   const nameInput = $("#settingsUserTestNameInput");
   const noteInput = $("#settingsUserTestNoteInput");
   const statusEl = $("#settingsUserTestStatus");
@@ -1268,11 +1271,37 @@ async function saveUserTestSettings() {
 
   try {
     if (statusEl) statusEl.textContent = "Ukládám nastavení testu…";
-    const out = await apiUpdateTestSettings(testId, { name, note });
-    state.testSettings[testId] = { name: String(out?.name ?? ""), note: String(out?.note ?? "") };
+    const out = await apiUpdateTestSettings(previousTestId, { name, note });
+    const updatedTestId = normalizeTestId(out?.test_id) ?? previousTestId;
+
+    if (updatedTestId !== previousTestId) {
+      state.tests = (state.tests ?? []).map((id) => (id === previousTestId ? updatedTestId : id));
+      state.tests = Array.from(new Set(state.tests));
+      saveTestsToStorage(state.tests);
+
+      if (state.correctAnswers?.[previousTestId]) {
+        state.correctAnswers[updatedTestId] = state.correctAnswers[previousTestId];
+        delete state.correctAnswers[previousTestId];
+      }
+      if (state.testSettings?.[previousTestId]) {
+        state.testSettings[updatedTestId] = state.testSettings[previousTestId];
+        delete state.testSettings[previousTestId];
+      }
+
+      state.selectedTestId = updatedTestId;
+      saveSelectedTestToStorage(updatedTestId);
+      await refreshSessions();
+      await refreshGroups();
+    }
+
+    state.testSettings[updatedTestId] = { name: String(out?.name ?? ""), note: String(out?.note ?? "") };
     renderTestsList();
     renderSettingsPage();
-    if (statusEl) statusEl.textContent = "Uloženo.";
+    if (statusEl) {
+      statusEl.textContent = updatedTestId === previousTestId
+        ? "Uloženo."
+        : `Uloženo. ID testu změněno na: ${updatedTestId}`;
+    }
   } catch (e) {
     if (statusEl) statusEl.textContent = `Chyba uložení: ${e?.message ?? e}`;
   }
@@ -4191,6 +4220,43 @@ function closeGroupEditModal() {
   setPage("groups");
 }
 
+async function exportCurrentGroupCsv() {
+  const group = getSelectedGroup();
+  const statusEl = $("#groupEditStatus");
+  if (!group?.id) {
+    if (statusEl) statusEl.textContent = "Nejdřív vyber skupinu.";
+    return;
+  }
+
+  try {
+    const res = await fetch(apiGetGroupExportCsvUrl(group.id));
+    if (!res.ok) {
+      let err = {};
+      try { err = await res.json(); } catch { }
+      throw new Error(err.detail ?? res.statusText);
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const fallback = `group_export_${group.id}.csv`;
+    const match = disposition.match(/filename="([^"]+)"/i);
+    const filename = (match && match[1]) ? match[1] : fallback;
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    if (statusEl) statusEl.textContent = `CSV export hotový (${filename}).`;
+  } catch (e) {
+    if (statusEl) statusEl.textContent = `Export CSV selhal: ${e.message}`;
+  }
+}
+
 function openGroupSplitModal() {
   const statusEl = $("#groupSplitStatus");
   const selected = state.groupEditSessionIds ?? [];
@@ -4408,20 +4474,38 @@ function updateBreadcrumbs() {
 }
 
 function selectTest(testId) {
-  state.selectedTestId = testId;
-  saveSelectedTestToStorage(testId);
+  const normalizedTestId = normalizeTestId(testId);
+  state.selectedTestId = normalizedTestId;
+  saveSelectedTestToStorage(normalizedTestId);
   updateBreadcrumbs();
-  state.selectedSessionIds = loadGroupDraftSelectionForTest(testId);
 
-const sessionsForTest = getSessionsForSelectedTest();
+if (!normalizedTestId) {
+    state.selectedSessionIds = [];
+    state.selectedSessionId = null;
+    state.selectedSession = null;
+    renderTestAggMetrics();
+    renderSessionsList();
+    renderSessionMetrics();
+    renderTasksList();
+    if (!$("#view-settings")?.classList.contains("hidden")) {
+      renderSettingsPage();
+    }
+    if (!$("#view-groups")?.classList.contains("hidden")) {
+      refreshGroups().then(() => renderGroupsPage());
+    }
+    return;
+  }
+
+  state.selectedSessionIds = loadGroupDraftSelectionForTest(normalizedTestId);
+
+  const sessionsForTest = getSessionsForSelectedTest();
   if (state.selectedSessionId && !sessionsForTest.some(s => s.session_id === state.selectedSessionId)) {
     state.selectedSessionId = null;
     state.selectedSession = null;
   }
-  
 
   $$("#testsList .list-item").forEach(item => {
-    item.classList.toggle("is-selected", item.dataset.test === testId);
+    item.classList.toggle("is-selected", item.dataset.test === normalizedTestId);
   });
 
   renderTestAggMetrics();
@@ -4482,7 +4566,7 @@ async function refreshSessions() {
 function wireNavButtons() {
   $("#backToTestsBtn")?.addEventListener("click", () => {
     setPage("dashboard");
-    selectTest(state.selectedTestId ?? "TEST");
+    selectTest(state.selectedTestId ?? state.tests[0] ?? null);
   });
 
   $("#openSessionBtn")?.addEventListener("click", () => {
@@ -4499,7 +4583,7 @@ function wireNavButtons() {
 
   $("#backFromSettingsBtn")?.addEventListener("click", () => {
     setPage("dashboard");
-    selectTest(state.selectedTestId ?? "TEST");
+    selectTest(state.selectedTestId ?? state.tests[0] ?? null);
   });
 
   $("#openGroupsBtn")?.addEventListener("click", async () => {
@@ -4592,6 +4676,7 @@ function wireNavButtons() {
   $("#deleteGroupBtn")?.addEventListener("click", deleteCurrentGroup);
   $("#groupEditCreateGroupFromSelectedBtn")?.addEventListener("click", openGroupSplitModal);
   $("#groupEditDeleteFlaggedBtn")?.addEventListener("click", deleteFlaggedFromGroup);
+  $("#groupEditExportCsvBtn")?.addEventListener("click", exportCurrentGroupCsv);
 
   //Timeline button (on "Úlohy v session" page, right column)
   $("#openTimelineBtn")?.addEventListener("click", () => {
@@ -5016,15 +5101,17 @@ async function init() {
 
   renderTestsList();
 
-  selectTest(state.selectedTestId ?? "TEST");
+  selectTest(state.selectedTestId ?? state.tests[0] ?? null);
   setPage("dashboard");
   updateBreadcrumbs();
   renderTestAggMetrics();
 
   (async () => {
     try {
-      const out = await apiGetTestAnswers(state.selectedTestId ?? "TEST");
-      state.correctAnswers[state.selectedTestId] = out.answers ?? {};
+      const selectedTestId = normalizeTestId(state.selectedTestId);
+      if (!selectedTestId) return;
+      const out = await apiGetTestAnswers(selectedTestId);
+      state.correctAnswers[selectedTestId] = out.answers ?? {};
     } catch { /* ignore */ }
   })();
   

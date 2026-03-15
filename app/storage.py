@@ -7,7 +7,7 @@ import json
 import os
 import threading
 
-from sqlalchemy import String, Text, create_engine, select, delete, event, inspect, text
+from sqlalchemy import String, Text, create_engine, select, delete, update, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.types import JSON
 from sqlalchemy.schema import ForeignKey
@@ -18,6 +18,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 TEST_ANSWERS_FILE = DATA_DIR / "test_answers.json"
 GROUPS_FILE = DATA_DIR / "groups.json"
+DEFAULT_TEST_ID = os.getenv("DEFAULT_TEST_ID", "TEST")
 
 
 @dataclass
@@ -61,7 +62,7 @@ class SessionRecord(Base):
         String(100),
         ForeignKey("tests.id", ondelete="RESTRICT"),
         index=True,
-        default="TEST",
+        default=DEFAULT_TEST_ID,
     )
     file_path: Mapped[str] = mapped_column(Text())
     user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -89,7 +90,7 @@ class GroupRecord(Base):
         String(100),
         ForeignKey("tests.id", ondelete="CASCADE"),
         index=True,
-        default="TEST",
+        default=DEFAULT_TEST_ID,
     )
     name: Mapped[str] = mapped_column(String(255))
     note: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
@@ -186,7 +187,7 @@ def _normalize_groups_data(raw: Any) -> List[Dict[str, Any]]:
             continue
 
         group_id = str(item.get("id", "")).strip()
-        test_id = str(item.get("test_id", "TEST")).strip() or "TEST"
+        test_id = _normalize_test_id(item.get("test_id"))
         name = str(item.get("name", "")).strip()
         session_ids = item.get("session_ids")
         if not isinstance(session_ids, list):
@@ -244,9 +245,9 @@ def _migrate_json_seed_data() -> None:
             answers_seed = _load_test_answers_from_json()
             groups_seed = _load_groups_from_json()
 
-            all_test_ids = {"TEST"}
-            all_test_ids.update(tid for tid in answers_seed.keys() if isinstance(tid, str) and tid.strip())
-            all_test_ids.update(str(g.get("test_id") or "TEST").strip() or "TEST" for g in groups_seed)
+            all_test_ids = set()
+            all_test_ids.update(tid.strip() for tid in answers_seed.keys() if isinstance(tid, str) and tid.strip())
+            all_test_ids.update(str(g.get("test_id") or "").strip() for g in groups_seed if str(g.get("test_id") or "").strip())
             for test_id in all_test_ids:
                 _ensure_test(db, test_id)
             db.flush()
@@ -262,7 +263,7 @@ def _migrate_json_seed_data() -> None:
             has_groups = db.execute(select(GroupRecord).limit(1)).scalar_one_or_none() is not None
             if not has_groups:
                 for group in groups_seed:
-                    normalized_test_id = str(group.get("test_id") or "TEST").strip() or "TEST"
+                    normalized_test_id = _normalize_test_id(group.get("test_id"))
                     db.add(
                         GroupRecord(
                             id=group["id"],
@@ -299,7 +300,7 @@ class DatabaseStore:
 
     def upsert(self, session: SessionData) -> None:
         payload_stats = session.stats if isinstance(session.stats, dict) else {}
-        normalized_test_id = str(session.test_id or "TEST").strip() or "TEST"
+        normalized_test_id = _normalize_test_id(session.test_id)
 
         with SessionLocal() as db:
             _ensure_test(db, normalized_test_id)
@@ -354,9 +355,9 @@ class DatabaseStore:
                 for row in rows
             }
 
-def delete_sessions(self, test_id: str, session_ids: List[str]) -> int:
-        normalized_test_id = str(test_id or "TEST").strip() or "TEST"
-        normalized_ids = [str(sid).strip() for sid in session_ids if isinstance(sid, str) and str(sid).strip()]
+    def delete_sessions(self, test_id: str, session_ids: List[str]) -> int:
+        normalized_test_id = _normalize_test_id(test_id)
+        normalized_ids = _normalize_session_ids(session_ids)
         if not normalized_ids:
             return 0
 
@@ -375,59 +376,37 @@ def delete_sessions(self, test_id: str, session_ids: List[str]) -> int:
             db.commit()
             return deleted_count
 
-def delete_all_sessions_for_test(self, test_id: str) -> int:
-    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+    def delete_all_sessions_for_test(self, test_id: str) -> int:
+        normalized_test_id = _normalize_test_id(test_id)
 
-    with SessionLocal() as db:
-        rows = db.execute(
-            select(SessionRecord).where(SessionRecord.test_id == normalized_test_id)
-        ).scalars().all()
+        with SessionLocal() as db:
+            rows = db.execute(
+                select(SessionRecord).where(SessionRecord.test_id == normalized_test_id)
+            ).scalars().all()
 
-        for row in rows:
-            db.delete(row)
+            for row in rows:
+                db.delete(row)
 
-        deleted_count = len(rows)
-        db.commit()
-        return deleted_count
+            deleted_count = len(rows)
+            db.commit()
+            return deleted_count
 
 
 STORE = DatabaseStore()
 
+def _normalize_test_id(test_id: Optional[str]) -> str:
+    normalized = str(test_id or "").strip()
+    return normalized or DEFAULT_TEST_ID
+
+
+def _normalize_session_ids(session_ids: List[str]) -> List[str]:
+    return [str(sid).strip() for sid in session_ids if isinstance(sid, str) and str(sid).strip()]
+
 def delete_sessions(test_id: str, session_ids: List[str]) -> int:
-    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
-    normalized_ids = [str(sid).strip() for sid in session_ids if isinstance(sid, str) and str(sid).strip()]
-    if not normalized_ids:
-        return 0
-
-    with SessionLocal() as db:
-        rows = db.execute(
-            select(SessionRecord).where(
-                SessionRecord.test_id == normalized_test_id,
-                SessionRecord.session_id.in_(normalized_ids),
-            )
-        ).scalars().all()
-
-        for row in rows:
-            db.delete(row)
-
-        deleted_count = len(rows)
-        db.commit()
-        return deleted_count
+    return STORE.delete_sessions(test_id=test_id, session_ids=session_ids)
 
 def delete_all_sessions_for_test(test_id: str) -> int:
-    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
-
-    with SessionLocal() as db:
-        rows = db.execute(
-            select(SessionRecord).where(SessionRecord.test_id == normalized_test_id)
-        ).scalars().all()
-
-        for row in rows:
-            db.delete(row)
-
-        deleted_count = len(rows)
-        db.commit()
-        return deleted_count
+    return STORE.delete_all_sessions_for_test(test_id=test_id)
 
 def ensure_upload_dir() -> Path:
     p = Path("data/uploads")
@@ -436,7 +415,7 @@ def ensure_upload_dir() -> Path:
 
 
 def get_test_answers(test_id: str) -> Dict[str, str]:
-    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+    normalized_test_id = _normalize_test_id(test_id)
     with SessionLocal() as db:
         rows = db.execute(
             select(TestAnswerRecord).where(TestAnswerRecord.test_id == normalized_test_id)
@@ -445,7 +424,7 @@ def get_test_answers(test_id: str) -> Dict[str, str]:
 
 
 def set_test_answer(test_id: str, task_id: str, answer: Optional[str]) -> Dict[str, str]:
-    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+    normalized_test_id = _normalize_test_id(test_id)
     normalized_task_id = str(task_id or "unknown").strip() or "unknown"
 
     with SessionLocal() as db:
@@ -544,7 +523,7 @@ def create_test(test_id: str, name: Optional[str] = None, note: Optional[str] = 
 
 def upsert_group(group_id: str, test_id: str, name: str, session_ids: List[str]) -> Dict[str, Any]:
     normalized_group_id = str(group_id or "").strip()
-    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+    normalized_test_id = _normalize_test_id(test_id)
     normalized_name = str(name or "").strip()
 
     normalized_session_ids = []
@@ -614,10 +593,8 @@ def upsert_group(group_id: str, test_id: str, name: str, session_ids: List[str])
 
 
 def get_test_settings(test_id: str) -> Dict[str, Optional[str]]:
-    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+    normalized_test_id = _normalize_test_id(test_id)
     with SessionLocal() as db:
-        _ensure_test(db, normalized_test_id)
-        db.commit()
         row = db.get(TestRecord, normalized_test_id)
         return {
             "name": row.name if row else None,
@@ -626,25 +603,72 @@ def get_test_settings(test_id: str) -> Dict[str, Optional[str]]:
 
 
 def update_test_settings(test_id: str, name: Optional[str], note: Optional[str]) -> Dict[str, Optional[str]]:
-    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+    normalized_test_id = _normalize_test_id(test_id)
     normalized_name = str(name).strip() if name is not None else None
     normalized_note = str(note) if note is not None else None
+    target_test_id = normalized_name if normalized_name else normalized_test_id
 
     with SessionLocal() as db:
         _ensure_test(db, normalized_test_id)
         row = db.get(TestRecord, normalized_test_id)
-        if row:
-            row.name = normalized_name if normalized_name else None
-            row.note = normalized_note
+        if not row:
+            raise ValueError("Test not found")
+
+        if target_test_id != normalized_test_id:
+            existing_target = db.get(TestRecord, target_test_id)
+            if existing_target:
+                raise ValueError("Test already exists")
+
+            db.add(
+                TestRecord(
+                    id=target_test_id,
+                    name=normalized_name,
+                    note=normalized_note,
+                )
+            )
+            db.flush()
+
+            db.execute(
+                update(SessionRecord)
+                .where(SessionRecord.test_id == normalized_test_id)
+                .values(test_id=target_test_id)
+            )
+            db.execute(
+                update(TaskRecord)
+                .where(TaskRecord.test_id == normalized_test_id)
+                .values(test_id=target_test_id)
+            )
+            db.execute(
+                update(TestAnswerRecord)
+                .where(TestAnswerRecord.test_id == normalized_test_id)
+                .values(test_id=target_test_id)
+            )
+            db.execute(
+                update(GroupRecord)
+                .where(GroupRecord.test_id == normalized_test_id)
+                .values(test_id=target_test_id)
+            )
+
+            db.delete(row)
+            db.commit()
+            return {
+                "id": target_test_id,
+                "name": normalized_name,
+                "note": normalized_note,
+            }
+
+        row.name = normalized_name if normalized_name else None
+        row.note = normalized_note
         db.commit()
         return {
+            "id": row.id if row else normalized_test_id,
             "name": row.name if row else None,
             "note": row.note if row else None,
         }
 
 
 def delete_test(test_id: str) -> bool:
-    normalized_test_id = str(test_id or "TEST").strip() or "TEST"
+    normalized_test_id = _normalize_test_id(test_id)
     with SessionLocal() as db:
         row = db.get(TestRecord, normalized_test_id)
         if not row:

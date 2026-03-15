@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import unicodedata
 from collections import Counter
+from io import StringIO
 import shutil
 from typing import Any, Dict, Optional, List
 from uuid import uuid4
@@ -1058,9 +1059,15 @@ def api_update_test_settings(test_id: str, payload: dict = Body(...)):
     name = payload.get("name")
     note = payload.get("note")
 
-    updated = update_test_settings(test_id=test_id, name=name, note=note)
+    try:
+        updated = update_test_settings(test_id=test_id, name=name, note=note)
+    except ValueError as e:
+        msg = str(e)
+        status = 409 if msg == "Test already exists" else 400
+        raise HTTPException(status_code=status, detail=msg)
+
     return {
-        "test_id": test_id,
+        "test_id": updated.get("id") or test_id,
         "name": updated.get("name"),
         "note": updated.get("note"),
     }
@@ -1111,6 +1118,76 @@ def api_list_groups(test_id: Optional[str] = None):
         })
 
     return {"groups": out}
+
+
+@app.get("/api/groups/{group_id}/export-csv")
+def api_export_group_csv(group_id: str):
+    group = next((g for g in list_groups() if g.get("id") == group_id), None)
+    if not group:
+        raise HTTPException(status_code=404, detail="Skupina nenalezena.")
+
+    session_ids = group.get("session_ids", []) if isinstance(group.get("session_ids"), list) else []
+    if not session_ids:
+        raise HTTPException(status_code=400, detail="Skupina neobsahuje žádné sessions.")
+
+    csv_frames: List[pd.DataFrame] = []
+    user_id_values: List[str] = []
+    all_columns: List[str] = []
+
+    for sid in session_ids:
+        session = STORE.get(sid)
+        if not session:
+            continue
+
+        csv_path = Path(session.file_path)
+        if not csv_path.exists():
+            continue
+
+        try:
+            df = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Nelze načíst CSV pro session '{sid}': {e}")
+
+        if df.empty:
+            continue
+
+        user_col = get_user_id_column(df)
+        user_id = _normalize_user_id(session.user_id)
+        if not user_id and user_col and not df.empty:
+            user_id = _normalize_user_id(df.iloc[0].get(user_col))
+
+        if user_col and user_id:
+            filtered = df[df[user_col].astype(str).str.strip() == user_id]
+        elif user_col:
+            filtered = df
+        else:
+            filtered = df
+
+        if filtered.empty:
+            continue
+
+        csv_frames.append(filtered)
+        if user_id:
+            user_id_values.append(user_id)
+        for col in filtered.columns:
+            if col not in all_columns:
+                all_columns.append(col)
+
+    if not csv_frames:
+        raise HTTPException(status_code=404, detail="Pro tuto skupinu nebyla nalezena žádná CSV data.")
+
+    export_df = pd.concat(csv_frames, ignore_index=True, sort=False)
+    if all_columns:
+        export_df = export_df.reindex(columns=all_columns)
+
+    output = StringIO()
+    export_df.to_csv(output, index=False)
+
+    group_name = str(group.get("name") or group_id)
+    filename = f"group_export_{_sanitize_filename_component(group_name)}.csv"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=output.getvalue(), media_type="text/csv; charset=utf-8", headers=headers)
+
 
 @app.get("/api/groups/{group_id}/answers")
 def api_group_answers(group_id: str):
