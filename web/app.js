@@ -78,6 +78,26 @@ function escapeHtml(s) {
     .replaceAll("'", "&#039;");
 }
 
+function sanitizeFileNamePart(value, fallback = "export") {
+  const cleaned = String(value ?? "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return cleaned || fallback;
+}
+
+function downloadGeoJsonFile(featureCollection, suggestedBaseName) {
+  const blob = new Blob([JSON.stringify(featureCollection, null, 2)], { type: "application/geo+json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${sanitizeFileNamePart(suggestedBaseName, "export")}.geojson`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function isCoordinateLike(s) {
   if (!s) return false;
   return /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/.test(String(s).trim());
@@ -156,6 +176,7 @@ const state = {
     endpointLayer: null,
     viewportLayer: null,
     viewportRectangles: [],
+    currentSpatialPayload: null,
     isInitialized: false,
   },
   taskModalTab: "metrics",
@@ -2653,6 +2674,7 @@ function clearSessionMapData() {
   state.map.endpointLayer?.clearLayers?.();
   state.map.viewportLayer?.clearLayers?.();
   state.map.viewportRectangles = [];
+  state.map.currentSpatialPayload = null;
 }
 
 function buildPointsFeatureCollection(spatial) {
@@ -2721,6 +2743,27 @@ function buildTrackPointFeatureCollection(spatial) {
     }));
 
   return { type: "FeatureCollection", features };
+}
+
+function buildViewportPolygonCoordinates(bounds) {
+  if (!Array.isArray(bounds) || bounds.length !== 2) return [];
+  const sw = bounds[0];
+  const ne = bounds[1];
+  if (!Array.isArray(sw) || !Array.isArray(ne) || sw.length < 2 || ne.length < 2) return [];
+
+  const south = Number(sw[0]);
+  const west = Number(sw[1]);
+  const north = Number(ne[0]);
+  const east = Number(ne[1]);
+  if (![south, west, north, east].every(Number.isFinite)) return [];
+
+  const buildRing = (ringWest, ringEast) => ([[ringWest, south], [ringEast, south], [ringEast, north], [ringWest, north], [ringWest, south]]);
+
+  if (west > east) {
+    return [buildRing(west, 180), buildRing(-180, east)];
+  }
+
+  return [buildRing(west, east)];
 }
 
 function makeViewportRectangle(bounds) {
@@ -2798,6 +2841,7 @@ function renderSpatialTraceToMap(spatialPayload) {
   ensureSessionMapInitialized();
   clearSessionMapData();
 
+  state.map.currentSpatialPayload = spatialPayload ?? null;
   const spatial = spatialPayload?.spatial ?? { track: { points: [] }, popups: [] };
   const pointsGeoJson = buildPointsFeatureCollection(spatial);
   const trackGeoJson = buildTrackFeatureCollection(spatial);
@@ -3002,6 +3046,132 @@ function openSessionMapModal() {
       isError: true,
     });
   });
+}
+
+function buildSessionTrajectoryExportGeoJson(payload) {
+  const spatial = payload?.spatial ?? {};
+  const coordinates = Array.isArray(spatial?.track?.points)
+    ? spatial.track.points
+      .filter((xy) => Array.isArray(xy) && xy.length >= 2)
+      .map((xy) => [Number(xy[1]), Number(xy[0])])
+      .filter((xy) => Number.isFinite(xy[0]) && Number.isFinite(xy[1]))
+    : [];
+
+  return {
+    type: "FeatureCollection",
+    features: coordinates.length >= 2 ? [{
+      type: "Feature",
+      geometry: { type: "LineString", coordinates },
+      properties: {
+        session_id: payload?.session_id ?? null,
+        user_id: payload?.user_id ?? null,
+      },
+    }] : [],
+  };
+}
+
+function buildSessionTrajectoryPointsExportGeoJson(payload) {
+  const spatial = payload?.spatial ?? {};
+  const samples = Array.isArray(spatial?.track?.samples) ? spatial.track.samples : [];
+  const endpoints = spatial?.movementEndpoints ?? {};
+  const endpointItems = [
+    { kind: "Start", point: endpoints?.start },
+    { kind: "End", point: endpoints?.end },
+  ];
+
+  const features = samples
+    .filter((sample) => Number.isFinite(Number(sample?.lat)) && Number.isFinite(Number(sample?.lon)))
+    .map((sample, index) => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [Number(sample.lon), Number(sample.lat)] },
+      properties: {
+        point_type: "trajectory_point",
+        index,
+        t: Number.isFinite(Number(sample?.timestamp)) ? Number(sample.timestamp) : null,
+        z: Number.isFinite(Number(sample?.zoom)) ? Number(sample.zoom) : null,
+        task: sample?.task ?? null,
+      },
+    }));
+
+  endpointItems.forEach(({ kind, point }) => {
+    if (!Number.isFinite(Number(point?.lat)) || !Number.isFinite(Number(point?.lon))) return;
+    features.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [Number(point.lon), Number(point.lat)] },
+      properties: {
+        point_type: kind.toLowerCase(),
+        t: Number.isFinite(Number(point?.timestamp)) ? Number(point.timestamp) : null,
+        z: null,
+        task: point?.task ?? null,
+      },
+    });
+  });
+
+  return { type: "FeatureCollection", features };
+}
+
+function buildSessionViewportExportGeoJson(payload) {
+  const spatial = payload?.spatial ?? {};
+  const samples = Array.isArray(spatial?.track?.samples) ? spatial.track.samples : [];
+  const features = samples
+    .map((sample, index) => {
+      const rings = buildViewportPolygonCoordinates(sample?.viewportBounds);
+      if (!rings.length) return null;
+      return {
+        type: "Feature",
+        geometry: {
+          type: rings.length > 1 ? "MultiPolygon" : "Polygon",
+          coordinates: rings.length > 1 ? rings.map((ring) => [ring]) : [rings[0]],
+        },
+        properties: {
+          point_index: index,
+          t: Number.isFinite(Number(sample?.timestamp)) ? Number(sample.timestamp) : null,
+          z: Number.isFinite(Number(sample?.zoom)) ? Number(sample.zoom) : null,
+          task: sample?.task ?? null,
+        },
+      };
+    })
+    .filter(Boolean);
+
+  return { type: "FeatureCollection", features };
+}
+
+function exportCurrentSessionMapGeoJson(kind) {
+  const payload = state.map.currentSpatialPayload;
+  const sessionId = state.selectedSession?.session_id ?? payload?.session_id ?? "session";
+  if (!payload) {
+    window.alert("No map data is loaded yet.");
+    return;
+  }
+
+  const exporters = {
+    trajectory: {
+      build: buildSessionTrajectoryExportGeoJson,
+      fileName: `session_${sessionId}_trajectory`,
+      emptyMessage: "No trajectory is available for export.",
+    },
+    trajectoryPoints: {
+      build: buildSessionTrajectoryPointsExportGeoJson,
+      fileName: `session_${sessionId}_trajectory_points`,
+      emptyMessage: "No trajectory points are available for export.",
+    },
+    viewports: {
+      build: buildSessionViewportExportGeoJson,
+      fileName: `session_${sessionId}_viewports`,
+      emptyMessage: "No viewports are available for export.",
+    },
+  };
+
+  const selected = exporters[kind];
+  if (!selected) return;
+
+  const geojson = selected.build(payload);
+  if (!Array.isArray(geojson?.features) || !geojson.features.length) {
+    window.alert(selected.emptyMessage);
+    return;
+  }
+
+  downloadGeoJsonFile(geojson, selected.fileName);
 }
 
 function closeSessionMapModal() {
@@ -4936,6 +5106,9 @@ function wireModal() {
   $("#closeSessionMapBtn")?.addEventListener("click", closeSessionMapModal);
   $("#closeSessionMapBtn2")?.addEventListener("click", closeSessionMapModal);
   $("#sessionMapModalBackdrop")?.addEventListener("click", closeSessionMapModal);
+  $("#exportSessionTrajectoryBtn")?.addEventListener("click", () => exportCurrentSessionMapGeoJson("trajectory"));
+  $("#exportSessionTrajectoryPointsBtn")?.addEventListener("click", () => exportCurrentSessionMapGeoJson("trajectoryPoints"));
+  $("#exportSessionViewportsBtn")?.addEventListener("click", () => exportCurrentSessionMapGeoJson("viewports"));
 
   const mapControlIds = [
     "#mapShowPoints",

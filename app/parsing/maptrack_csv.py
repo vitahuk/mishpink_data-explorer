@@ -276,6 +276,25 @@ def _normalize_task_id(v: Any) -> Optional[str]:
     s = str(v).strip()
     return s if s else None
 
+def _resolve_row_task_id(row: pd.Series, current_task: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    event_name = str(row.get("event_name", "")).strip()
+    parsed = parse_event_detail(event_name, row.get("event_detail"))
+
+    task_id = _normalize_task_id(row.get("task")) if "task" in row.index else None
+    next_current_task = current_task
+
+    if event_name == "setting task":
+        inferred = parsed.get("task_id")
+        if isinstance(inferred, str) and inferred.strip():
+            next_current_task = inferred.strip()
+            if not task_id:
+                task_id = next_current_task
+
+    if not task_id:
+        task_id = current_task
+
+    return task_id, next_current_task
+
 def build_spatial_trace_for_user(
     df: pd.DataFrame,
     user_id: Optional[str] = None,
@@ -352,11 +371,13 @@ def build_spatial_trace_for_user(
     last_popup_name: Optional[str] = None
     first_movestart_point: Optional[Dict[str, Any]] = None
     last_zoom: Optional[float] = None
+    current_task: Optional[str] = None
 
     for _, row in data.iterrows():
         event_name = str(row.get("event_name", "")).strip()
         event_detail = row.get("event_detail")
         timestamp = int(row.get("_timestamp"))
+        row_task, current_task = _resolve_row_task_id(row, current_task)
 
         if event_name == "popupopen:name":
             if event_detail is None or (isinstance(event_detail, float) and pd.isna(event_detail)):
@@ -376,11 +397,11 @@ def build_spatial_trace_for_user(
         coord = parse_coordinate_detail_if_allowed(event_name, event_detail)
         if coord is not None:
             lat, lon = coord
-            all_coordinate_points.append({"lat": lat, "lon": lon, "timestamp": timestamp})
+            all_coordinate_points.append({"lat": lat, "lon": lon, "timestamp": timestamp, "task": row_task})
 
         if event_name == "movestart" and coord is not None and first_movestart_point is None:
             lat, lon = coord
-            first_movestart_point = {"lat": lat, "lon": lon, "timestamp": timestamp}
+            first_movestart_point = {"lat": lat, "lon": lon, "timestamp": timestamp, "task": row_task}
             continue
 
         if event_name == "moveend" and coord is not None:
@@ -411,6 +432,7 @@ def build_spatial_trace_for_user(
                 "viewportHeight": viewport.height,
                 "orientation": orientation,
                 "viewportBounds": viewport_bounds,
+                "task": row_task,
             })
 
             if track_points:
@@ -445,6 +467,7 @@ def build_spatial_trace_for_user(
                 "viewportHeight": track_samples[0].get("viewportHeight") if track_samples else None,
                 "orientation": track_samples[0].get("orientation") if track_samples else None,
                 "viewportBounds": None,
+                "task": first_movestart_point.get("task"),
             }
             vw = seed_sample.get("viewportWidth")
             vh = seed_sample.get("viewportHeight")

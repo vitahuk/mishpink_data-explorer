@@ -514,6 +514,14 @@ p {
   gap: 10px;
 }
 
+.modal-foot-session-map {
+  flex-wrap: wrap;
+}
+
+.modal-foot-session-map .btn:last-child {
+  margin-left: auto;
+}
+
 #sessionsList,
 #groupEditSessionsList {
   max-height: 55vh;
