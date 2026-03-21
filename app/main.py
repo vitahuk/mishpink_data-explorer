@@ -283,13 +283,24 @@ def _build_timeline_items_from_events_df(df: pd.DataFrame) -> List[Dict[str, Any
 
 def _build_task_start_offsets(events: List[Dict[str, Any]]) -> Dict[str, int]:
     task_offsets: Dict[str, int] = {}
+    first_task_id: Optional[str] = None
 
+    for event in events:
+        task_raw = event.get("task")
+        task_id = str(task_raw).strip() if task_raw is not None else ""
+        if task_id:
+            first_task_id = task_id
+            break
+    
     for event in events:
         task_raw = event.get("task")
         task_id = str(task_raw).strip() if task_raw is not None else ""
         if not task_id or task_id in task_offsets:
             continue
-        task_offsets[task_id] = int(event.get("timestamp", 0))
+        if task_id == first_task_id:
+            task_offsets[task_id] = 0
+        else:
+            task_offsets[task_id] = int(event.get("timestamp", 0))
 
     return task_offsets
 
