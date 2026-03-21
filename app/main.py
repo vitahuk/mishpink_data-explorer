@@ -234,6 +234,16 @@ def _build_timeline_items_from_events_df(df: pd.DataFrame) -> List[Dict[str, Any
             else:
                 items.append({"type": "instant", "name": name, "ts": ts, "task": task})
             continue
+        
+        if name == "setting task" and open_popup:
+            items.append({
+                "type": "interval",
+                "name": "POPUP",
+                "startTs": int(open_popup["startTs"]),
+                "endTs": ts,
+                "task": open_popup.get("task") or task,
+            })
+            open_popup = None
 
         if open_popup and not open_popup.get("task") and task:
             open_popup["task"] = task

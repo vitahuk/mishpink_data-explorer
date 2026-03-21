@@ -2014,6 +2014,17 @@ function buildTimelineItems(events) {
       continue;
     }
 
+    if (name === "setting task" && openPopup) {
+      items.push({
+        type: "interval",
+        name: "POPUP",
+        startTs: openPopup.startTs,
+        endTs: ts,
+        details: openPopup.details,
+      });
+      openPopup = null;
+    }
+
     // If popup is open, collect useful detail from events that happen inside popup (optional)
     // We keep it lightweight: only if event_detail exists and is text.
     if (openPopup && detail) {
