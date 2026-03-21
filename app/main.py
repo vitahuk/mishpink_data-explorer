@@ -7,6 +7,7 @@ from fastapi import Body
 
 from pathlib import Path
 import re
+import threading
 import unicodedata
 from collections import Counter
 from io import StringIO
@@ -46,6 +47,8 @@ app = FastAPI(title="MapTrack Analytics (MVP)")
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
+UPLOAD_JOBS: Dict[str, Dict[str, Any]] = {}
+UPLOAD_JOBS_LOCK = threading.Lock()
 
 @app.get("/")
 def index():
@@ -55,6 +58,35 @@ def index():
 # =========================
 # Helpers
 # =========================
+
+def _create_upload_job(*, kind: str, filename: str, test_id: str) -> str:
+    job_id = uuid4().hex
+    with UPLOAD_JOBS_LOCK:
+        UPLOAD_JOBS[job_id] = {
+            "job_id": job_id,
+            "kind": kind,
+            "filename": filename,
+            "test_id": test_id,
+            "status": "uploaded",
+            "message": "Upload successful.",
+            "error": None,
+            "result": None,
+        }
+    return job_id
+
+
+def _update_upload_job(job_id: str, **changes: Any) -> None:
+    with UPLOAD_JOBS_LOCK:
+        job = UPLOAD_JOBS.get(job_id)
+        if not job:
+            return
+        job.update(changes)
+
+
+def _get_upload_job(job_id: str) -> Optional[Dict[str, Any]]:
+    with UPLOAD_JOBS_LOCK:
+        job = UPLOAD_JOBS.get(job_id)
+        return dict(job) if job else None
 
 def _read_soc_demo_row(csv_path: Path) -> Dict[str, Any]:
     """
@@ -692,6 +724,170 @@ def _build_group_answers_payload(group: Dict[str, Any]) -> Dict[str, Any]:
         "users": by_user,
     }
 
+def _process_single_csv(dst: Path, filename: str, test_id: str) -> Dict[str, Any]:
+    parsed_session = parse_session(str(dst), filename)
+
+    tasks: List[str] = list_task_ids(parsed_session)
+    primary_task: Optional[str] = tasks[0] if tasks else None
+
+    soc_row = _read_soc_demo_row(dst)
+    session_metrics = compute_session_metrics(session=parsed_session, raw_row=soc_row)
+    task_metrics = compute_all_task_metrics(parsed_session)
+
+    source_df = _read_csv_flexible(dst)
+    answers_by_task = _extract_answers_by_task_from_df(source_df)
+    answers_eval = _build_answers_eval_for_session(answers_by_task, get_test_answers(test_id or "TEST"))
+
+    stats: Dict[str, Any] = {
+        "session": session_metrics,
+        "tasks": task_metrics,
+        "answers_by_task": answers_by_task,
+        "answers_eval": answers_eval,
+    }
+    stats["interval_event_ratios"] = _compute_interval_event_ratios(
+        _build_timeline_items_from_events_df(_read_session_events_df(dst)),
+        task_metrics,
+    )
+
+    session_meta = SessionData(
+        session_id=parsed_session.session_id,
+        test_id=test_id or "TEST",
+        file_path=str(dst),
+        user_id=parsed_session.user_id,
+        task=primary_task,
+        stats=stats,
+    )
+    STORE.upsert(session_meta)
+
+    return {
+        "session_id": parsed_session.session_id,
+        "user_id": parsed_session.user_id,
+        "test_id": test_id or "TEST",
+        "task": primary_task,
+        "tasks": tasks,
+    }
+
+
+def _process_bulk_csv(dst: Path, filename: str, test_id: str) -> Dict[str, Any]:
+    df = pd.read_csv(dst, low_memory=False)
+    age_col = resolve_single_column(df.columns, "age", SOC_DEMO_COLUMN_ALIASES["age"])
+    if age_col:
+        df[age_col] = pd.to_numeric(df[age_col], errors="coerce")
+    validate_maptrack_df(df)
+
+    user_col = get_user_id_column(df)
+    if not user_col:
+        raise HTTPException(status_code=400, detail="CSV does not contain the required column 'userid'.")
+
+    df["_user_id_norm"] = df[user_col].apply(_normalize_user_id)
+    df = df[df["_user_id_norm"].notna()]
+    if df.empty:
+        raise HTTPException(status_code=400, detail="CSV does not contain any valid values in the 'userid' column.")
+
+    soc_rows = _read_soc_demo_rows_by_user(df, "_user_id_norm")
+    base_session_id = infer_session_id_from_filename(filename)
+
+    sessions_out: List[Dict[str, Any]] = []
+
+    for user_id, df_user in df.groupby("_user_id_norm", sort=False):
+        df_user = df_user.drop(columns=["_user_id_norm"])
+
+        user_suffix = _sanitize_filename_component(str(user_id))
+        user_filename = f"{dst.stem}__{user_suffix}.csv"
+        user_path = UPLOAD_DIR / user_filename
+        df_user.to_csv(user_path, index=False)
+
+        session_id = f"{base_session_id}__{user_suffix}"
+        parsed_session = parse_session_df(
+            df_user,
+            user_filename,
+            user_id_override=str(user_id),
+            session_id_override=session_id,
+        )
+
+        tasks: List[str] = list_task_ids(parsed_session)
+        primary_task: Optional[str] = tasks[0] if tasks else None
+
+        soc_row = soc_rows.get(str(user_id), {})
+        session_metrics = compute_session_metrics(session=parsed_session, raw_row=soc_row)
+        task_metrics = compute_all_task_metrics(parsed_session)
+        answers_by_task = _extract_answers_by_task_from_df(df_user)
+        answers_eval = _build_answers_eval_for_session(answers_by_task, get_test_answers(test_id or "TEST"))
+
+        stats: Dict[str, Any] = {
+            "session": session_metrics,
+            "tasks": task_metrics,
+            "answers": answers_by_task,
+            "answers_by_task": answers_by_task,
+            "answers_eval": answers_eval,
+        }
+
+        stats["interval_event_ratios"] = _compute_interval_event_ratios(
+            _build_timeline_items_from_events_df(_read_session_events_df(user_path)),
+            task_metrics,
+        )
+
+        session_meta = SessionData(
+            session_id=parsed_session.session_id,
+            test_id=test_id or "TEST",
+            file_path=str(user_path),
+            user_id=parsed_session.user_id,
+            task=primary_task,
+            stats=stats,
+        )
+        STORE.upsert(session_meta)
+
+        sessions_out.append({
+            "session_id": parsed_session.session_id,
+            "test_id": test_id or "TEST",
+            "user_id": parsed_session.user_id,
+            "task": primary_task,
+            "tasks": tasks,
+        })
+
+    return {
+        "count": len(sessions_out),
+        "sessions": sessions_out,
+        "first_session_id": sessions_out[0]["session_id"] if sessions_out else None,
+    }
+
+
+def _run_upload_job(job_id: str, *, kind: str, dst: Path, filename: str, test_id: str) -> None:
+    _update_upload_job(
+        job_id,
+        status="processing",
+        message="Processing CSV... this might take a while for large files.",
+    )
+    try:
+        if kind == "single":
+            result = _process_single_csv(dst, filename, test_id)
+        elif kind == "bulk":
+            result = _process_bulk_csv(dst, filename, test_id)
+        else:
+            raise RuntimeError(f"Unsupported upload kind: {kind}")
+
+        _update_upload_job(
+            job_id,
+            status="completed",
+            message="CSV processing finished.",
+            result=result,
+        )
+    except HTTPException as exc:
+        _update_upload_job(
+            job_id,
+            status="failed",
+            message="CSV processing failed.",
+            error=exc.detail,
+        )
+    except Exception as exc:
+        _update_upload_job(
+            job_id,
+            status="failed",
+            message="CSV processing failed.",
+            error=str(exc),
+        )
+
+
 def _build_wordcloud_from_group_payload(payload: Dict[str, Any], task_id: Optional[str] = None) -> List[Dict[str, Any]]:
     tasks = payload.get("tasks", {}) if isinstance(payload.get("tasks"), dict) else {}
     counter: Counter[str] = Counter()
@@ -717,73 +913,34 @@ async def upload_csv(
     file: UploadFile = File(...),
     test_id: str = Form("TEST"),
 ):
-    if not file.filename.lower().endswith(".csv"):
+    filename = (file.filename or "").strip()
+    if not filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Please upload a CSV file.")
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    dst = UPLOAD_DIR / file.filename
+    dst = UPLOAD_DIR / filename
 
-    # save file to disk
     try:
         with dst.open("wb") as f:
             shutil.copyfileobj(file.file, f)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
 
-    # parse + metrics
-    try:
-        parsed_session = parse_session(str(dst), file.filename)
-
-        # tasks list (stable order)
-        tasks: List[str] = list_task_ids(parsed_session)
-        primary_task: Optional[str] = tasks[0] if tasks else None
-
-        # soc-demo from first row (optional columns)
-        soc_row = _read_soc_demo_row(dst)
-
-        # session metrics (+ soc-demo inside)
-        session_metrics = compute_session_metrics(session=parsed_session, raw_row=soc_row)
-
-        # task metrics (duration + event_count per task)
-        task_metrics = compute_all_task_metrics(parsed_session)
-
-        # store all stats in one structure
-        source_df = _read_csv_flexible(dst)
-        answers_by_task = _extract_answers_by_task_from_df(source_df)
-        answers_eval = _build_answers_eval_for_session(answers_by_task, get_test_answers(test_id or "TEST"))
-
-        stats: Dict[str, Any] = {
-            "session": session_metrics,
-            "tasks": task_metrics,
-            "answers_by_task": answers_by_task,
-            "answers_eval": answers_eval,
-        }
-        stats["interval_event_ratios"] = _compute_interval_event_ratios(
-            _build_timeline_items_from_events_df(_read_session_events_df(dst)),
-            task_metrics,
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"CSV processing failed: {e}")
-
-    # store metadata (MVP: in-memory)
-    session_meta = SessionData(
-        session_id=parsed_session.session_id,
-        test_id=test_id or "TEST",
-        file_path=str(dst),
-        user_id=parsed_session.user_id,
-        task=primary_task,
-        stats=stats,
+    job_id = _create_upload_job(kind="single", filename=filename, test_id=test_id or "TEST")
+    worker = threading.Thread(
+        target=_run_upload_job,
+        args=(job_id,),
+        kwargs={"kind": "single", "dst": dst, "filename": filename, "test_id": test_id or "TEST"},
+        daemon=True,
     )
-    STORE.upsert(session_meta)
+    worker.start()
 
     return {
-        "session_id": parsed_session.session_id,
-        "user_id": parsed_session.user_id,
+        "job_id": job_id,
+        "status": "uploaded",
+        "message": "Upload successful.",
         "test_id": test_id or "TEST",
-        "task": primary_task,
-        "tasks": tasks,
-        "stats": stats,
+        "filename": filename,
     }
 
 @app.post("/api/upload/bulk")
@@ -791,11 +948,12 @@ async def upload_bulk_csv(
     file: UploadFile = File(...),
     test_id: str = Form("TEST"),
 ):
-    if not file.filename.lower().endswith(".csv"):
+    filename = (file.filename or "").strip()
+    if not filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Please upload a CSV file")
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    dst = UPLOAD_DIR / file.filename
+    dst = UPLOAD_DIR / filename
 
     try:
         with dst.open("wb") as f:
@@ -826,70 +984,30 @@ async def upload_bulk_csv(
 
     sessions_out: List[Dict[str, Any]] = []
 
-    try:
-        for user_id, df_user in df.groupby("_user_id_norm", sort=False):
-            df_user = df_user.drop(columns=["_user_id_norm"])
-
-            user_suffix = _sanitize_filename_component(str(user_id))
-            user_filename = f"{dst.stem}__{user_suffix}.csv"
-            user_path = UPLOAD_DIR / user_filename
-            df_user.to_csv(user_path, index=False)
-
-            session_id = f"{base_session_id}__{user_suffix}"
-            parsed_session = parse_session_df(
-                df_user,
-                user_filename,
-                user_id_override=str(user_id),
-                session_id_override=session_id,
-            )
-
-            tasks: List[str] = list_task_ids(parsed_session)
-            primary_task: Optional[str] = tasks[0] if tasks else None
-
-            soc_row = soc_rows.get(str(user_id), {})
-            session_metrics = compute_session_metrics(session=parsed_session, raw_row=soc_row)
-            task_metrics = compute_all_task_metrics(parsed_session)
-            answers_by_task = _extract_answers_by_task_from_df(df_user)
-            answers_eval = _build_answers_eval_for_session(answers_by_task, get_test_answers(test_id or "TEST"))
-
-            stats: Dict[str, Any] = {
-                "session": session_metrics,
-                "tasks": task_metrics,
-                "answers": answers_by_task,
-                "answers_by_task": answers_by_task,
-                "answers_eval": answers_eval,
-            }
-
-            stats["interval_event_ratios"] = _compute_interval_event_ratios(
-                _build_timeline_items_from_events_df(_read_session_events_df(user_path)),
-                task_metrics,
-            )
-
-            session_meta = SessionData(
-                session_id=parsed_session.session_id,
-                test_id=test_id or "TEST",
-                file_path=str(user_path),
-                user_id=parsed_session.user_id,
-                task=primary_task,
-                stats=stats,
-            )
-            STORE.upsert(session_meta)
-
-            sessions_out.append({
-                "session_id": parsed_session.session_id,
-                "test_id": test_id or "TEST",
-                "user_id": parsed_session.user_id,
-                "task": primary_task,
-                "tasks": tasks,
-                "stats": stats,
-            })
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Bulk CSV processing failed: {e}")
+    job_id = _create_upload_job(kind="bulk", filename=filename, test_id=test_id or "TEST")
+    worker = threading.Thread(
+        target=_run_upload_job,
+        args=(job_id,),
+        kwargs={"kind": "bulk", "dst": dst, "filename": filename, "test_id": test_id or "TEST"},
+        daemon=True,
+    )
+    worker.start()
 
     return {
-        "count": len(sessions_out),
-        "sessions": sessions_out,
+        "job_id": job_id,
+        "status": "uploaded",
+        "message": "Upload successful.",
+        "test_id": test_id or "TEST",
+        "filename": filename,
     }
+
+
+@app.get("/api/upload/jobs/{job_id}")
+def get_upload_job(job_id: str):
+    job = _get_upload_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Upload job not found.")
+    return job
 
 
 @app.get("/api/sessions")

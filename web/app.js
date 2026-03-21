@@ -348,6 +348,10 @@ async function apiUploadBulk(file, testId) {
   return res.json();
 }
 
+async function apiGetUploadJob(jobId) {
+  return apiGet(`/api/upload/jobs/${encodeURIComponent(jobId)}`);
+}
+
 async function apiGetTestAnswers(testId) {
   return apiGet(`/api/tests/${encodeURIComponent(testId)}/answers`);
 }
@@ -5414,6 +5418,38 @@ function wireUploadTestModal() {
   });
 }
 
+async function pollUploadJob(jobId, {
+  statusEl,
+  processingMessage = "Processing CSV... this might take a while for large files.",
+  onCompleted,
+}) {
+  if (!jobId) throw new Error("Missing upload job ID.");
+
+  while (true) {
+    const job = await apiGetUploadJob(jobId);
+
+    if (job.status === "uploaded" || job.status === "processing") {
+      if (statusEl) statusEl.textContent = job.status === "uploaded"
+        ? (job.message ?? "Upload successful.")
+        : (job.message ?? processingMessage);
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      continue;
+    }
+
+    if (job.status === "failed") {
+      throw new Error(job.error ?? job.message ?? "CSV processing failed.");
+    }
+
+    if (job.status === "completed") {
+      if (statusEl) statusEl.textContent = job.message ?? "CSV processing finished.";
+      await onCompleted(job.result ?? {});
+      return job.result ?? {};
+    }
+
+    throw new Error(`Unknown upload job status: ${job.status}`);
+  }
+}
+
 function wireUpload() {
   const input = $("#csvInput");
   if (!input) return;
@@ -5431,30 +5467,41 @@ function wireUpload() {
     if (statusEl) statusEl.textContent = `Uploading: ${file.name}…`;
 
     try {
-      const out = await apiUpload(file, testId ?? "TEST");
-      if (statusEl) statusEl.textContent = `Uploaded: ${out.session_id} (user: ${out.user_id ?? "—"})`;
+      const upload = await apiUpload(file, testId ?? "TEST");
+      if (statusEl) statusEl.textContent = upload.message ?? "Upload successful.";
 
-      await refreshSessions();
-      renderTestAggMetrics();
+      await pollUploadJob(upload.job_id, {
+        statusEl,
+        onCompleted: async (result) => {
+          await refreshSessions();
+          renderTestAggMetrics();
 
-      if (!state.selectedSessionId) {
-        state.selectedSessionId = out.session_id;
-        state.selectedSession = state.sessions.find(s => s.session_id === out.session_id) ?? null;
-      }
+          if (!state.selectedSessionId && result.session_id) {
+            state.selectedSessionId = result.session_id;
+          }
+          if (result.session_id) {
+            state.selectedSession = state.sessions.find(s => s.session_id === result.session_id) ?? null;
+          }
 
-      if (!$("#view-individual")?.classList.contains("hidden")) {
-        renderSessionsList();
-        renderSessionMetrics();
-      }
+          if (!$("#view-individual")?.classList.contains("hidden")) {
+            renderSessionsList();
+            renderSessionMetrics();
+          }
 
-      if (!$("#view-group")?.classList.contains("hidden")) {
-        renderTasksList();
-      }
+          if (!$("#view-group")?.classList.contains("hidden")) {
+            renderTasksList();
+          }
 
-      if (!$("#view-settings")?.classList.contains("hidden")) {
-        // tasks list might change if new CSV introduces new task ids
-        renderSettingsPage();
-      }
+          if (!$("#view-settings")?.classList.contains("hidden")) {
+            // tasks list might change if new CSV introduces new task ids
+            renderSettingsPage();
+          }
+
+          if (statusEl) {
+            statusEl.textContent = `Done: ${result.session_id ?? file.name} (user: ${result.user_id ?? "—"})`;
+          }
+        },
+      });
 
     } catch (ex) {
       if (statusEl) statusEl.textContent = `Error: ${ex?.message ?? ex}`;
@@ -5481,30 +5528,41 @@ function wireBulkUpload() {
     if (statusEl) statusEl.textContent = `Uploading bulk CSV: ${file.name}…`;
 
     try {
-      const out = await apiUploadBulk(file, testId ?? "TEST");
-      if (statusEl) statusEl.textContent = `Uploaded bulk CSV: ${out.count ?? 0} sessions`;
+      const upload = await apiUploadBulk(file, testId ?? "TEST");
+      if (statusEl) statusEl.textContent = upload.message ?? "Upload successful.";
 
-      await refreshSessions();
-      renderTestAggMetrics();
+      await pollUploadJob(upload.job_id, {
+        statusEl,
+        onCompleted: async (result) => {
+          await refreshSessions();
+          renderTestAggMetrics();
 
-      if (!state.selectedSessionId && out.sessions?.length) {
-        const firstSessionId = out.sessions[0].session_id;
-        state.selectedSessionId = firstSessionId;
-        state.selectedSession = state.sessions.find(s => s.session_id === firstSessionId) ?? null;
-      }
+          const firstSessionId = result.first_session_id ?? result.sessions?.[0]?.session_id ?? null;
+          if (!state.selectedSessionId && firstSessionId) {
+            state.selectedSessionId = firstSessionId;
+          }
+          if (firstSessionId) {
+            state.selectedSession = state.sessions.find(s => s.session_id === firstSessionId) ?? null;
+          }
 
-      if (!$("#view-individual")?.classList.contains("hidden")) {
-        renderSessionsList();
-        renderSessionMetrics();
-      }
+          if (!$("#view-individual")?.classList.contains("hidden")) {
+            renderSessionsList();
+            renderSessionMetrics();
+          }
 
-      if (!$("#view-group")?.classList.contains("hidden")) {
-        renderTasksList();
-      }
+          if (!$("#view-group")?.classList.contains("hidden")) {
+            renderTasksList();
+          }
 
-      if (!$("#view-settings")?.classList.contains("hidden")) {
-        renderSettingsPage();
-      }
+          if (!$("#view-settings")?.classList.contains("hidden")) {
+            renderSettingsPage();
+          }
+
+          if (statusEl) {
+            statusEl.textContent = `Done: bulk CSV processed (${result.count ?? 0} sessions).`;
+          }
+        },
+      });
     } catch (ex) {
       if (statusEl) statusEl.textContent = `Error: ${ex?.message ?? ex}`;
     } finally {

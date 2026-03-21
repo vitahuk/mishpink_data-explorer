@@ -4,13 +4,14 @@ __pycache__/
 *.pyc
 
 # Data
-data/uploads/
 *.csv
+data/uploads/
+*.db
 
 # OS
 .DS_Store
 
 # TXT
-.server_spusteni.txt
-.dalsi_postup.txt
+server_spusteni.txt
+dalsi_postup.txt
 
