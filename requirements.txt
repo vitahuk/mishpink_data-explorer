@@ -1,5 +1,7 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
-pandas==2.2.2
+pandas==3.0.0
 python-multipart==0.0.9
 SQLAlchemy==2.0.35
+rapidfuzz==3.14.0
+pycountry==26.2.0
