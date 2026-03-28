@@ -56,7 +56,7 @@ from app.analysis.metrics import (
 )
 from app.normalization.nationality import normalize_nationality
 
-app = FastAPI(title="MapTrack Analytics (MVP)")
+app = FastAPI(title="Mishpink data explorer")
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

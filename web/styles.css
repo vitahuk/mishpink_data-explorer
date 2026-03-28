@@ -71,6 +71,37 @@ a {
   gap: 14px;
 }
 
+.password-input-wrap {
+  position: relative;
+}
+
+.password-input-wrap input {
+  padding-right: 42px;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px;
+}
+
+.password-toggle-btn:hover {
+  color: var(--text);
+}
+
+.password-toggle-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .login-btn {
   justify-content: center;
 }

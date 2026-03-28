@@ -4366,7 +4366,7 @@ function renderGroupCompareChartTab(groups) {
   const controlsHtml = `
     <div class="compare-chart-controls">
       <label class="filter-field" style="min-width:220px; margin:0;">
-        <span>Dimenze osy X</span>
+        <span>X-axis dimension</span>
         <select id="groupCompareChartDimensionSelect">
           ${Object.entries(GROUP_COMPARE_DIMENSIONS).map(([key, cfg]) => `<option value="${escapeHtml(key)}" ${state.groupCompareChartDimension === key ? "selected" : ""}>${escapeHtml(cfg.label)}</option>`).join("")}
         </select>
