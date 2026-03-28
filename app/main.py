@@ -2285,3 +2285,13 @@ def api_update_group(group_id: str, payload: dict = Body(...)):
         raise HTTPException(status_code=400, detail=str(e))
 
     return {"group": group}
+
+
+@app.get("/{full_path:path}")
+def spa_fallback(full_path: str):
+    normalized = full_path.strip("/")
+    if normalized.startswith("api/") or normalized.startswith("static/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    if normalized == "login":
+        return RedirectResponse(url="/login", status_code=307)
+    return FileResponse(str(WEB_DIR / "index.html"))

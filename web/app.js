@@ -223,6 +223,181 @@ const state = {
   },
 };
 
+const ROUTE_NAMES = {
+  DASHBOARD: "dashboard",
+  SESSIONS: "sessions",
+  SESSION_DETAIL: "sessionDetail",
+  GROUPS: "groups",
+  GROUP_EDIT: "groupEdit",
+  SETTINGS: "settings",
+};
+
+function encodeRoutePart(value) {
+  return encodeURIComponent(String(value ?? "").trim());
+}
+
+function decodeRoutePart(value) {
+  try {
+    return decodeURIComponent(String(value ?? ""));
+  } catch {
+    return String(value ?? "");
+  }
+}
+
+function buildRoutePath(route) {
+  if (!route || !route.name) return "/";
+  switch (route.name) {
+    case ROUTE_NAMES.DASHBOARD:
+      return "/";
+    case ROUTE_NAMES.SESSIONS:
+      return `/experiment/${encodeRoutePart(route.testId)}/sessions`;
+    case ROUTE_NAMES.SESSION_DETAIL:
+      return `/experiment/${encodeRoutePart(route.testId)}/sessions/${encodeRoutePart(route.sessionId)}`;
+    case ROUTE_NAMES.GROUPS:
+      return `/experiment/${encodeRoutePart(route.testId)}/groups`;
+    case ROUTE_NAMES.GROUP_EDIT:
+      return `/experiment/${encodeRoutePart(route.testId)}/groups/${encodeRoutePart(route.groupId)}/edit`;
+    case ROUTE_NAMES.SETTINGS:
+      return `/experiment/${encodeRoutePart(route.testId)}/settings`;
+    default:
+      return "/";
+  }
+}
+
+function parseRouteFromPathname() {
+  const path = String(window.location.pathname ?? "") || "/";
+  const parts = path.split("/").filter(Boolean);
+  if (!parts.length) return { name: ROUTE_NAMES.DASHBOARD };
+
+  if (parts[0] !== "experiment") return { name: ROUTE_NAMES.DASHBOARD };
+  const testId = decodeRoutePart(parts[1] ?? "");
+  if (!testId) return { name: ROUTE_NAMES.DASHBOARD };
+
+  if (parts[2] === "sessions" && parts.length === 3) {
+    return { name: ROUTE_NAMES.SESSIONS, testId };
+  }
+  if (parts[2] === "sessions" && parts.length >= 4) {
+    const sessionId = decodeRoutePart(parts[3] ?? "");
+    if (!sessionId) return { name: ROUTE_NAMES.SESSIONS, testId };
+    return { name: ROUTE_NAMES.SESSION_DETAIL, testId, sessionId };
+  }
+  if (parts[2] === "groups" && parts.length === 3) {
+    return { name: ROUTE_NAMES.GROUPS, testId };
+  }
+  if (parts[2] === "groups" && parts[4] === "edit") {
+    const groupId = decodeRoutePart(parts[3] ?? "");
+    if (!groupId) return { name: ROUTE_NAMES.GROUPS, testId };
+    return { name: ROUTE_NAMES.GROUP_EDIT, testId, groupId };
+  }
+  if (parts[2] === "settings") {
+    return { name: ROUTE_NAMES.SETTINGS, testId };
+  }
+
+  return { name: ROUTE_NAMES.DASHBOARD };
+}
+
+function getCurrentRouteFromState() {
+  const testId = normalizeTestId(state.selectedTestId);
+  if (state.currentPage === "individual" && testId) return { name: ROUTE_NAMES.SESSIONS, testId };
+  if (state.currentPage === "group" && testId && state.selectedSessionId) {
+    return { name: ROUTE_NAMES.SESSION_DETAIL, testId, sessionId: state.selectedSessionId };
+  }
+  if (state.currentPage === "groups" && testId) return { name: ROUTE_NAMES.GROUPS, testId };
+  if (state.currentPage === "group-edit" && testId && state.selectedGroupId) {
+    return { name: ROUTE_NAMES.GROUP_EDIT, testId, groupId: state.selectedGroupId };
+  }
+  if (state.currentPage === "settings" && testId) return { name: ROUTE_NAMES.SETTINGS, testId };
+  return { name: ROUTE_NAMES.DASHBOARD };
+}
+
+function normalizeRoute(route) {
+  if (!route || !route.name) return { name: ROUTE_NAMES.DASHBOARD };
+  const testId = normalizeTestId(route.testId);
+  if (route.name === ROUTE_NAMES.DASHBOARD) return { name: ROUTE_NAMES.DASHBOARD };
+  if (!testId) return { name: ROUTE_NAMES.DASHBOARD };
+
+  if (route.name === ROUTE_NAMES.SESSIONS) return { name: ROUTE_NAMES.SESSIONS, testId };
+  if (route.name === ROUTE_NAMES.SESSION_DETAIL) {
+    const sessionId = String(route.sessionId ?? "").trim();
+    return sessionId
+      ? { name: ROUTE_NAMES.SESSION_DETAIL, testId, sessionId }
+      : { name: ROUTE_NAMES.SESSIONS, testId };
+  }
+  if (route.name === ROUTE_NAMES.GROUPS) return { name: ROUTE_NAMES.GROUPS, testId };
+  if (route.name === ROUTE_NAMES.GROUP_EDIT) {
+    const groupId = String(route.groupId ?? "").trim();
+    return groupId
+      ? { name: ROUTE_NAMES.GROUP_EDIT, testId, groupId }
+      : { name: ROUTE_NAMES.GROUPS, testId };
+  }
+  if (route.name === ROUTE_NAMES.SETTINGS) return { name: ROUTE_NAMES.SETTINGS, testId };
+  return { name: ROUTE_NAMES.DASHBOARD };
+}
+
+function updateHistoryForRoute(route, { replace = false } = {}) {
+  const normalized = normalizeRoute(route);
+  const path = buildRoutePath(normalized);
+  if (!replace && window.location.pathname === path) return;
+  const method = replace ? "replaceState" : "pushState";
+  window.history[method](normalized, "", path);
+}
+
+async function navigateToRoute(route, { replace = false } = {}) {
+  await applyRoute(route, { syncHistory: true, replace });
+}
+
+async function applyRoute(route, { syncHistory = false, replace = false } = {}) {
+  const normalized = normalizeRoute(route);
+  const routeTestId = normalizeTestId(normalized.testId);
+
+  if (routeTestId && routeTestId !== normalizeTestId(state.selectedTestId)) {
+    selectTest(routeTestId);
+    await refreshSessions();
+  } else if (routeTestId && !state.sessions.length) {
+    await refreshSessions();
+  }
+
+  if (normalized.name === ROUTE_NAMES.DASHBOARD) {
+    setPage("dashboard");
+    renderTestAggMetrics();
+    renderTestsList();
+  } else if (normalized.name === ROUTE_NAMES.SESSIONS) {
+    setPage("individual");
+    renderSessionsList();
+    renderSessionMetrics();
+  } else if (normalized.name === ROUTE_NAMES.SESSION_DETAIL) {
+    const session = state.sessions.find((s) => s.session_id === normalized.sessionId) ?? null;
+    if (!session) {
+      return applyRoute({ name: ROUTE_NAMES.SESSIONS, testId: routeTestId }, { syncHistory: true, replace: true });
+    }
+    selectSession(normalized.sessionId);
+    setPage("group");
+    renderTasksList();
+  } else if (normalized.name === ROUTE_NAMES.GROUPS) {
+    await refreshGroups();
+    setPage("groups");
+    renderGroupsPage();
+  } else if (normalized.name === ROUTE_NAMES.GROUP_EDIT) {
+    await refreshGroups();
+    const group = state.groups.find((g) => g.id === normalized.groupId) ?? null;
+    if (!group) {
+      return applyRoute({ name: ROUTE_NAMES.GROUPS, testId: routeTestId }, { syncHistory: true, replace: true });
+    }
+    state.selectedGroupId = group.id;
+    openGroupEditModal();
+  } else if (normalized.name === ROUTE_NAMES.SETTINGS) {
+    setPage("settings");
+    await loadAnswersForSelectedTest();
+    await loadTestSettingsForSelectedTest();
+    renderSettingsPage();
+  }
+
+  if (syncHistory) {
+    updateHistoryForRoute(normalized, { replace });
+  }
+  updateBreadcrumbs();
+}
+
 function normalizeTestId(value) {
   const trimmed = String(value ?? "").trim();
   return trimmed ? trimmed : null;
@@ -780,14 +955,9 @@ function renderTestsList() {
       selectTest(testId);
 
       if (action === "settings") {
-        setPage("settings");
-        await loadAnswersForSelectedTest();
-        await loadTestSettingsForSelectedTest();
-        renderSettingsPage();
+        await navigateToRoute({ name: ROUTE_NAMES.SETTINGS, testId });
       } else if (action === "open") {
-        setPage("individual");
-        renderSessionsList();
-        renderSessionMetrics();
+        await navigateToRoute({ name: ROUTE_NAMES.SESSIONS, testId });
       }
     });
   });
@@ -6138,101 +6308,90 @@ function resetClientStateForLogout() {
 }
 
 function wireNavButtons() {
-  $("#crumb-root")?.addEventListener("click", () => {
-    setPage("dashboard");
-    renderTestAggMetrics();
-    renderTestsList();
+  $("#crumb-root")?.addEventListener("click", async () => {
+    await navigateToRoute({ name: ROUTE_NAMES.DASHBOARD });
   });
 
-  $("#crumb-test")?.addEventListener("click", () => {
+  $("#crumb-test")?.addEventListener("click", async () => {
     if (!state.selectedTestId) return;
-    setPage("dashboard");
-    renderTestAggMetrics();
-    renderTestsList();
+    await navigateToRoute({ name: ROUTE_NAMES.DASHBOARD });
   });
 
   $("#crumb-section")?.addEventListener("click", async () => {
     if (state.currentPage === "group" || state.currentPage === "individual") {
-      setPage("individual");
-      renderSessionsList();
-      renderSessionMetrics();
+      await navigateToRoute({ name: ROUTE_NAMES.SESSIONS, testId: state.selectedTestId });
       return;
     }
 
     if (state.currentPage === "groups" || state.currentPage === "group-edit") {
-      await refreshGroups();
-      setPage("groups");
-      renderGroupsPage();
+      await navigateToRoute({ name: ROUTE_NAMES.GROUPS, testId: state.selectedTestId });
     }
   });
 
   $("#crumb-detail")?.addEventListener("click", async () => {
     if ((state.currentPage === "individual" || state.currentPage === "group") && state.selectedSessionId) {
-      if (!state.selectedSession) {
-        state.selectedSession = state.sessions.find((s) => s.session_id === state.selectedSessionId) ?? null;
-      }
-      setPage("group");
-      renderTasksList();
+      await navigateToRoute({
+        name: ROUTE_NAMES.SESSION_DETAIL,
+        testId: state.selectedTestId,
+        sessionId: state.selectedSessionId,
+      });
       return;
     }
 
     if ((state.currentPage === "groups" || state.currentPage === "group-edit") && state.selectedGroupId) {
-      await refreshGroups();
-      setPage("groups");
-      renderGroupsPage();
+      await navigateToRoute({ name: ROUTE_NAMES.GROUPS, testId: state.selectedTestId });
     }
   });
 
-  $("#backToTestsBtn")?.addEventListener("click", () => {
-    setPage("dashboard");
-    selectTest(state.selectedTestId ?? state.tests[0] ?? null);
+  $("#backToTestsBtn")?.addEventListener("click", async () => {
+    await navigateToRoute({ name: ROUTE_NAMES.DASHBOARD });
   });
 
   $("#exportTestGazeplotterCsvBtn")?.addEventListener("click", exportGazeplotterForCurrentTestSessions);
   $("#exportTestSpatialDataBtn")?.addEventListener("click", exportSpatialForCurrentTestSessions);
 
-  $("#openSessionBtn")?.addEventListener("click", () => {
+  $("#openSessionBtn")?.addEventListener("click", async () => {
     if (!state.selectedSession) return;
-    setPage("group");
-    renderTasksList();
+    await navigateToRoute({
+      name: ROUTE_NAMES.SESSION_DETAIL,
+      testId: state.selectedTestId,
+      sessionId: state.selectedSession.session_id,
+    });
   });
 
-  $("#backToSessionsBtn")?.addEventListener("click", () => {
-    setPage("individual");
-    renderSessionsList();
-    renderSessionMetrics();
+  $("#backToSessionsBtn")?.addEventListener("click", async () => {
+    await navigateToRoute({ name: ROUTE_NAMES.SESSIONS, testId: state.selectedTestId });
   });
 
-  $("#backFromSettingsBtn")?.addEventListener("click", () => {
-    setPage("dashboard");
-    selectTest(state.selectedTestId ?? state.tests[0] ?? null);
+  $("#backFromSettingsBtn")?.addEventListener("click", async () => {
+    await navigateToRoute({ name: ROUTE_NAMES.DASHBOARD });
   });
 
   $("#openGroupsBtn")?.addEventListener("click", async () => {
-    await refreshGroups();
-    setPage("groups")
+    await navigateToRoute({ name: ROUTE_NAMES.GROUPS, testId: state.selectedTestId });
     const groupsSearchInput = $("#groupsSearchInput");
     if (groupsSearchInput) groupsSearchInput.value = state.groupsSearchQuery ?? "";
-    renderGroupsPage();
   });
 
-  $("#backFromGroupsBtn")?.addEventListener("click", () => {
-    setPage("individual");
-    renderSessionsList();
-    renderSessionMetrics();
+  $("#backFromGroupsBtn")?.addEventListener("click", async () => {
+    await navigateToRoute({ name: ROUTE_NAMES.SESSIONS, testId: state.selectedTestId });
   });
 
-  $("#backFromGroupEditBtn")?.addEventListener("click", () => {
-    setPage("groups");
-    renderGroupsPage();
+  $("#backFromGroupEditBtn")?.addEventListener("click", async () => {
+    await navigateToRoute({ name: ROUTE_NAMES.GROUPS, testId: state.selectedTestId });
   });
 
   $("#createGroupBtn")?.addEventListener("click", () => {
     openCreateGroupModal();
   });
 
-  $("#editGroupBtn")?.addEventListener("click", () => {
-    openGroupEditModal();
+  $("#editGroupBtn")?.addEventListener("click", async () => {
+    if (!state.selectedGroupId) return;
+    await navigateToRoute({
+      name: ROUTE_NAMES.GROUP_EDIT,
+      testId: state.selectedTestId,
+      groupId: state.selectedGroupId,
+    });
   });
 
   $("#exportGroupGazeplotterCsvBtn")?.addEventListener("click", exportGazeplotterForCurrentGroupSessions);
@@ -6839,9 +6998,14 @@ async function init() {
   renderTestsList();
 
   selectTest(state.selectedTestId ?? state.tests[0] ?? null);
-  setPage("dashboard");
-  updateBreadcrumbs();
-  renderTestAggMetrics();
+  
+  window.addEventListener("popstate", async (event) => {
+    const route = normalizeRoute(event.state ?? parseRouteFromPathname());
+    await applyRoute(route, { syncHistory: false });
+  });
+
+  const initialRoute = normalizeRoute(parseRouteFromPathname());
+  await applyRoute(initialRoute, { syncHistory: true, replace: true });
 
   (async () => {
     try {
