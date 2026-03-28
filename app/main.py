@@ -785,19 +785,30 @@ def _build_spatial_export_collections(items: List[Dict[str, Any]]) -> Dict[str, 
         start_endpoint = movement_endpoints.get("start") if isinstance(movement_endpoints.get("start"), dict) else None
         end_endpoint = movement_endpoints.get("end") if isinstance(movement_endpoints.get("end"), dict) else None
 
-        def _resolve_endpoint_type(sample_payload: Dict[str, Any]) -> str:
-            sample_ts = sample_payload.get("timestamp")
-            sample_lat = sample_payload.get("lat")
-            sample_lon = sample_payload.get("lon")
-            for endpoint_kind, endpoint in (("start", start_endpoint), ("end", end_endpoint)):
-                if not endpoint:
+        def _resolve_endpoint_index(endpoint_payload: Optional[Dict[str, Any]], kind: str) -> Optional[int]:
+            if not endpoint_payload:
+                return None
+            for sample_idx, sample_payload in enumerate(samples):
+                if not isinstance(sample_payload, dict):
                     continue
-                if endpoint.get("timestamp") != sample_ts:
+                if sample_payload.get("timestamp") != endpoint_payload.get("timestamp"):
                     continue
-                if endpoint.get("lat") != sample_lat or endpoint.get("lon") != sample_lon:
+                if sample_payload.get("lat") != endpoint_payload.get("lat") or sample_payload.get("lon") != endpoint_payload.get("lon"):
                     continue
-                return endpoint_kind
-            return "trajectory_point"
+                return sample_idx
+            same_coord_indices = [
+                sample_idx
+                for sample_idx, sample_payload in enumerate(samples)
+                if isinstance(sample_payload, dict)
+                and sample_payload.get("lat") == endpoint_payload.get("lat")
+                and sample_payload.get("lon") == endpoint_payload.get("lon")
+            ]
+            if not same_coord_indices:
+                return None
+            return same_coord_indices[0] if kind == "start" else same_coord_indices[-1]
+
+        start_index = _resolve_endpoint_index(start_endpoint, "start")
+        end_index = _resolve_endpoint_index(end_endpoint, "end")
         
         for index, sample in enumerate(samples):
             if not isinstance(sample, dict):
@@ -809,7 +820,7 @@ def _build_spatial_export_collections(items: List[Dict[str, Any]]) -> Dict[str, 
                 continue
             point_props = {
                 **base_props,
-                "point_type": _resolve_endpoint_type(sample),
+                "point_type": "start" if start_index == index else ("end" if end_index == index else "trajectory_point"),
                 "index": index,
                 "t": int(sample.get("timestamp")) if sample.get("timestamp") is not None else None,
                 "z": float(sample.get("zoom")) if sample.get("zoom") is not None else None,

@@ -2635,7 +2635,7 @@ function renderTaskSpatialTraceToMap(spatialPayload) {
     const bounds = layer?.feature?.properties?.viewportBounds;
     const labelParts = [];
     if (Number.isFinite(Number(ts))) labelParts.push(`t=${Number(ts)}`);
-    if (Number.isFinite(Number(zoom)) && Number(zoom) > 0) labelParts.push(`z=${Number(zoom)}`);
+    if (Number.isFinite(Number(zoom))) labelParts.push(`z=${Number(zoom)}`);
     const baseLabel = labelParts.join(" · ") || "Trajectory point";
     layer.bindTooltip(`${kind} · ${baseLabel}`, { direction: "top", offset: [0, -8] });
 
@@ -2661,7 +2661,7 @@ function renderTaskSpatialTraceToMap(spatialPayload) {
     const zoom = layer?.feature?.properties?.zoom;
     const labelParts = [];
     if (Number.isFinite(Number(ts))) labelParts.push(`t=${Number(ts)}`);
-    if (Number.isFinite(Number(zoom)) && Number(zoom) > 0) labelParts.push(`z=${Number(zoom)}`);
+     if (Number.isFinite(Number(zoom))) labelParts.push(`z=${Number(zoom)}`);
     layer.bindTooltip(labelParts.join(" · ") || "Trajectory point", { direction: "top", offset: [0, -8] });
 
     const rect = makeViewportRectangle(bounds);
@@ -3815,13 +3815,23 @@ function buildEndpointFeatureCollection(spatial) {
   const samples = Array.isArray(spatial?.track?.samples) ? spatial.track.samples : [];
   const out = [];
 
-  const findLinkedSample = (point) => {
+  const findLinkedSample = (kind, point) => {
     if (!point) return null;
-    return samples.find((sample) => (
+    const exact = samples.find((sample) => (
       sample?.timestamp === point?.timestamp
       && sample?.lat === point?.lat
       && sample?.lon === point?.lon
     )) ?? null;
+    if (exact) return exact;
+
+    const sameCoord = samples.filter((sample) => (
+      sample?.lat === point?.lat
+      && sample?.lon === point?.lon
+    ));
+    if (!sameCoord.length) return null;
+    if (String(kind).toLowerCase() === "start") return sameCoord[0];
+    if (String(kind).toLowerCase() === "end") return sameCoord[sameCoord.length - 1];
+    return sameCoord[0];
   };
 
   [
@@ -3832,7 +3842,7 @@ function buildEndpointFeatureCollection(spatial) {
     const lat = Number(point.lat);
     const lon = Number(point.lon);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-    const linkedSample = findLinkedSample(point);
+    const linkedSample = findLinkedSample(kind, point);
 
     out.push({
       type: "Feature",
@@ -3899,7 +3909,7 @@ function renderSpatialTraceToMap(spatialPayload) {
     const bounds = layer?.feature?.properties?.viewportBounds;
     const labelParts = [];
     if (Number.isFinite(Number(ts))) labelParts.push(`t=${Number(ts)}`);
-    if (Number.isFinite(Number(zoom)) && Number(zoom) > 0) labelParts.push(`z=${Number(zoom)}`);
+    if (Number.isFinite(Number(zoom))) labelParts.push(`z=${Number(zoom)}`);
     const baseLabel = labelParts.join(" · ") || "Trajectory point";
     layer.bindTooltip(`${kind} · ${baseLabel}`, { direction: "top", offset: [0, -8] });
 
@@ -3925,7 +3935,7 @@ function renderSpatialTraceToMap(spatialPayload) {
     const zoom = layer?.feature?.properties?.zoom;
     const labelParts = [];
     if (Number.isFinite(Number(ts))) labelParts.push(`t=${Number(ts)}`);
-    if (Number.isFinite(Number(zoom)) && Number(zoom) > 0) labelParts.push(`z=${Number(zoom)}`);
+    if (Number.isFinite(Number(zoom))) labelParts.push(`z=${Number(zoom)}`);
     layer.bindTooltip(labelParts.join(" · ") || "Trajectory point", { direction: "top", offset: [0, -8] });
 
     const rect = makeViewportRectangle(bounds);
@@ -4122,25 +4132,24 @@ function buildSessionTrajectoryPointsExportGeoJson(payload) {
   const startPoint = endpoints?.start ?? null;
   const endPoint = endpoints?.end ?? null;
 
-  const resolvePointType = (sample) => {
-    if (
-      startPoint
-      && startPoint?.timestamp === sample?.timestamp
-      && startPoint?.lat === sample?.lat
-      && startPoint?.lon === sample?.lon
-    ) {
-      return "start";
-    }
-    if (
-      endPoint
-      && endPoint?.timestamp === sample?.timestamp
-      && endPoint?.lat === sample?.lat
-      && endPoint?.lon === sample?.lon
-    ) {
-      return "end";
-    }
-    return "trajectory_point";
+  const resolveEndpointIndex = (endpoint, kind) => {
+    if (!endpoint) return null;
+    const exactIdx = samples.findIndex((sample) => (
+      sample?.timestamp === endpoint?.timestamp
+      && sample?.lat === endpoint?.lat
+      && sample?.lon === endpoint?.lon
+    ));
+    if (exactIdx >= 0) return exactIdx;
+    const sameCoordIndices = samples
+      .map((sample, idx) => ({ sample, idx }))
+      .filter(({ sample }) => sample?.lat === endpoint?.lat && sample?.lon === endpoint?.lon)
+      .map(({ idx }) => idx);
+    if (!sameCoordIndices.length) return null;
+    return kind === "start" ? sameCoordIndices[0] : sameCoordIndices[sameCoordIndices.length - 1];
   };
+
+  const startIndex = resolveEndpointIndex(startPoint, "start");
+  const endIndex = resolveEndpointIndex(endPoint, "end");
 
   const features = samples
     .filter((sample) => Number.isFinite(Number(sample?.lat)) && Number.isFinite(Number(sample?.lon)))
@@ -4148,7 +4157,7 @@ function buildSessionTrajectoryPointsExportGeoJson(payload) {
       type: "Feature",
       geometry: { type: "Point", coordinates: [Number(sample.lon), Number(sample.lat)] },
       properties: {
-        point_type: resolvePointType(sample),
+        point_type: startIndex === index ? "start" : (endIndex === index ? "end" : "trajectory_point"),
         session_id: payload?.session_id ?? null,
         user_id: payload?.user_id ?? null,
         index,
