@@ -440,16 +440,19 @@ p {
   margin-top: 2px;
 }
 
-.hint {
+.dashboard-status-divider {
   margin-top: 12px;
-  border: 1px dashed rgba(34, 48, 74, .85);
-  border-radius: 14px;
-  padding: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(34, 48, 74, .55);
 }
 
-.hint-title {
+.upload-status-block {
+  display: grid;
+  gap: 6px;
+}
+
+.upload-status-title {
   font-weight: 700;
-  margin-bottom: 4px;
 }
 
 /* Buttons */

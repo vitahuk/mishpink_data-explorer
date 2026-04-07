@@ -91,6 +91,54 @@ function escapeHtml(s) {
     .replaceAll("'", "&#039;");
 }
 
+function inferButtonTooltip(buttonEl) {
+  if (!buttonEl) return "";
+  const ariaLabel = String(buttonEl.getAttribute("aria-label") ?? "").trim();
+  if (ariaLabel) return ariaLabel;
+  const text = String(buttonEl.textContent ?? "").replace(/\s+/g, " ").trim();
+  if (!text || text === "—") return "";
+  return text;
+}
+
+function applyButtonTooltips(root = document) {
+  const scope = root?.querySelectorAll ? root : document;
+  scope.querySelectorAll("button").forEach((buttonEl) => {
+    const explicitTooltip = String(buttonEl.dataset.tooltip ?? "").trim();
+    if (explicitTooltip) {
+      if (buttonEl.getAttribute("title") !== explicitTooltip) {
+        buttonEl.setAttribute("title", explicitTooltip);
+      }
+      return;
+    }
+    const existingTitle = String(buttonEl.getAttribute("title") ?? "").trim();
+    if (existingTitle) return;
+    const tooltip = inferButtonTooltip(buttonEl);
+    if (!tooltip) return;
+    buttonEl.setAttribute("title", tooltip);
+  });
+}
+
+function wireButtonTooltips() {
+  applyButtonTooltips(document);
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      if (mutation.type === "childList") {
+        mutation.addedNodes.forEach((node) => {
+          if (!(node instanceof Element)) return;
+          if (node.matches?.("button")) applyButtonTooltips(node.parentElement ?? document);
+          else applyButtonTooltips(node);
+        });
+      } else if (mutation.type === "characterData") {
+        const owner = mutation.target?.parentElement;
+        if (owner?.closest?.("button")) {
+          applyButtonTooltips(owner.closest("button"));
+        }
+      }
+    });
+  });
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+}
+
 function sanitizeFileNamePart(value, fallback = "export") {
   const cleaned = String(value ?? "")
     .trim()
@@ -521,8 +569,25 @@ function showAppMessage({ type = "info", text = "", timeoutMs = 5500 } = {}) {
   }
 }
 
+function setUploadStatusText(text) {
+  const statusEl = $("#uploadStatus");
+  const titleEl = $("#uploadStatusTitle");
+  if (!statusEl) return;
+
+  const message = String(text ?? "").trim();
+  statusEl.textContent = message;
+
+  const hasMessage = Boolean(message);
+  statusEl.classList.toggle("hidden", !hasMessage);
+  titleEl?.classList.toggle("hidden", !hasMessage);
+}
+
 function setStatusMessage(statusEl, text, type = "info") {
-  if (statusEl) statusEl.textContent = text;
+  if (statusEl?.id === "uploadStatus") {
+    setUploadStatusText(text);
+  } else if (statusEl) {
+    statusEl.textContent = text;
+  }
   if (type === "error") {
     showAppMessage({ type: "error", text, timeoutMs: 7000 });
   }
@@ -956,6 +1021,7 @@ function renderTestsList() {
         </div>
         <div class="muted small"></div>
         <div class="row actions">
+        <button class="btn btn-ghost" data-action="upload" type="button"> Upload data</button>
           <button class="btn btn-ghost" data-action="settings" type="button">Settings</button>
           <button class="btn" data-action="open" type="button">Open user experiment</button>
         </div>
@@ -966,6 +1032,12 @@ function renderTestsList() {
   $$("#testsList .list-item").forEach(item => {
     item.addEventListener("click", () => {
       selectTest(item.dataset.test);
+    });
+    item.addEventListener("dblclick", async () => {
+      const testId = item.dataset.test;
+      if (!testId) return;
+      selectTest(testId);
+      await navigateToRoute({ name: ROUTE_NAMES.SESSIONS, testId });
     });
   });
 
@@ -980,9 +1052,14 @@ function renderTestsList() {
 
       if (action === "settings") {
         await navigateToRoute({ name: ROUTE_NAMES.SETTINGS, testId });
+      } else if (action === "upload") {
+        openUploadTestModal({ kind: "bulk", testId });
       } else if (action === "open") {
         await navigateToRoute({ name: ROUTE_NAMES.SESSIONS, testId });
       }
+    });
+    btn.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
     });
   });
 }
@@ -1188,9 +1265,23 @@ function renderSessionsList() {
       const id = item.dataset.session;
       selectSession(id);
     });
+    item.addEventListener("dblclick", async (e) => {
+      if (e.target?.matches?.('input[data-role="group-select"]')) return;
+      const id = item.dataset.session;
+      if (!id) return;
+      selectSession(id);
+      await navigateToRoute({
+        name: ROUTE_NAMES.SESSION_DETAIL,
+        testId: state.selectedTestId,
+        sessionId: id,
+      });
+    });
   });
 
   $$("#sessionsList input[data-role='group-select']").forEach((input) => {
+    input.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+    });
     input.addEventListener("change", () => {
       const sessionId = input.dataset.session;
       if (!sessionId) return;
@@ -5559,10 +5650,23 @@ function renderGroupsPage() {
       updateBreadcrumbs();
       renderGroupsPage();
     });
+    item.addEventListener("dblclick", async () => {
+      const groupId = item.dataset.group;
+      if (!groupId) return;
+      state.selectedGroupId = groupId;
+      updateBreadcrumbs();
+      renderGroupsPage();
+      await navigateToRoute({
+        name: ROUTE_NAMES.GROUP_EDIT,
+        testId: state.selectedTestId,
+        groupId,
+      });
+    });
   });
 
   $$("#groupsList input[data-role='group-compare-select']").forEach((input) => {
     input.addEventListener("click", (e) => e.stopPropagation());
+    input.addEventListener("dblclick", (e) => e.stopPropagation());
     input.addEventListener("change", () => {
       const id = input.dataset.group;
       const set = new Set(state.selectedGroupCompareIds ?? []);
@@ -6325,6 +6429,7 @@ function selectTest(testId) {
 function selectSession(sessionId) {
   state.selectedSessionId = sessionId;
   state.selectedSession = state.sessions.find(s => s.session_id === sessionId) ?? null;
+  state.selectedTaskId = null;
   state.intervalRatiosSelection.taskKey = "ALL_TASKS";
   updateBreadcrumbs();
 
@@ -6720,49 +6825,47 @@ function wireModal() {
   });
 }
 
-function openUploadTestModal(kind) {
+function openUploadTestModal({ kind = "bulk", testId = null } = {}) {
   const modal = $("#uploadTestModal");
-  const select = $("#uploadTestSelect");
-  if (!modal || !select) return;
+  if (!modal) return;
 
-  select.innerHTML = state.tests.map((testId) => `
-    <option value="${escapeHtml(testId)}">${escapeHtml(getTestDisplayName(testId))}</option>
-  `).join("");
+  const resolvedTestId = normalizeTestId(testId) ?? normalizeTestId(state.selectedTestId) ?? state.tests[0] ?? "TEST";
+  const subtitleEl = $("#uploadTestSubtitle");
+  const messageEl = $("#uploadTestMessage");
 
-  select.value = state.selectedTestId ?? state.tests[0] ?? "TEST";
+  if (subtitleEl) subtitleEl.textContent = `Selected experiment: ${getTestDisplayName(resolvedTestId)}`;
+  if (messageEl) messageEl.textContent = "Upload your CSV file to this user experiment. The CSV must be formatted as a MishPink export (see Guide). Note: uploading large CSV files may take a while.";
+
+
   modal.dataset.kind = kind;
+  modal.dataset.testId = resolvedTestId;
   show(modal);
 }
 
 function closeUploadTestModal() {
   hide($("#uploadTestModal"));
   const modal = $("#uploadTestModal");
-  if (modal) delete modal.dataset.kind;
+if (modal) {
+    delete modal.dataset.kind;
+    delete modal.dataset.testId;
+  }
 }
 
 function wireUploadTestModal() {
-  $("#uploadSingleBtn")?.addEventListener("click", () => openUploadTestModal("single"));
-  $("#uploadBulkBtn")?.addEventListener("click", () => openUploadTestModal("bulk"));
-
   $("#closeUploadTestBtn")?.addEventListener("click", closeUploadTestModal);
   $("#cancelUploadTestBtn")?.addEventListener("click", closeUploadTestModal);
   $("#uploadTestModalBackdrop")?.addEventListener("click", closeUploadTestModal);
 
   $("#confirmUploadTestBtn")?.addEventListener("click", () => {
     const modal = $("#uploadTestModal");
-    const select = $("#uploadTestSelect");
-    if (!modal || !select) return;
+    if (!modal) return;
 
-    const testId = normalizeTestId(select.value) ?? "TEST";
-    const kind = modal.dataset.kind;
+    const testId = normalizeTestId(modal.dataset.testId) ?? "TEST";
+    const kind = modal.dataset.kind ?? "bulk";
     state.pendingUpload = { kind, testId };
     closeUploadTestModal();
 
-    if (kind === "bulk") {
-      $("#bulkCsvInput")?.click();
-    } else {
-      $("#csvInput")?.click();
-    }
+    $("#bulkCsvInput")?.click();
   });
 }
 
@@ -6777,9 +6880,12 @@ async function pollUploadJob(jobId, {
     const job = await apiGetUploadJob(jobId);
 
     if (job.status === "uploaded" || job.status === "processing") {
-      if (statusEl) statusEl.textContent = job.status === "uploaded"
-        ? (job.message ?? "Upload successful.")
-        : (job.message ?? processingMessage);
+      setStatusMessage(
+        statusEl,
+        job.status === "uploaded"
+          ? (job.message ?? "Upload successful.")
+          : (job.message ?? processingMessage),
+      );
       await new Promise((resolve) => setTimeout(resolve, 1200));
       continue;
     }
@@ -6793,74 +6899,13 @@ async function pollUploadJob(jobId, {
     }
 
     if (job.status === "completed") {
-      if (statusEl) statusEl.textContent = job.message ?? "CSV processing finished.";
+      setStatusMessage(statusEl, job.message ?? "CSV processing finished.");
       await onCompleted(job.result ?? {});
       return job.result ?? {};
     }
 
     throw new Error(`Unknown upload job status: ${job.status}`);
   }
-}
-
-function wireUpload() {
-  const input = $("#csvInput");
-  if (!input) return;
-
-  input.addEventListener("change", async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const testId = state.pendingUpload?.kind === "single"
-      ? state.pendingUpload?.testId
-      : (state.selectedTestId ?? "TEST");
-    state.pendingUpload = null;
-    
-    const statusEl = $("#uploadStatus");
-    if (statusEl) statusEl.textContent = `Uploading: ${file.name}…`;
-
-    try {
-      const upload = await apiUpload(file, testId ?? "TEST");
-      if (statusEl) statusEl.textContent = upload.message ?? "Upload successful.";
-
-      await pollUploadJob(upload.job_id, {
-        statusEl,
-        onCompleted: async (result) => {
-          await refreshSessions();
-          renderTestAggMetrics();
-
-          if (!state.selectedSessionId && result.session_id) {
-            state.selectedSessionId = result.session_id;
-          }
-          if (result.session_id) {
-            state.selectedSession = state.sessions.find(s => s.session_id === result.session_id) ?? null;
-          }
-
-          if (!$("#view-individual")?.classList.contains("hidden")) {
-            renderSessionsList();
-            renderSessionMetrics();
-          }
-
-          if (!$("#view-group")?.classList.contains("hidden")) {
-            renderTasksList();
-          }
-
-          if (!$("#view-settings")?.classList.contains("hidden")) {
-            // tasks list might change if new CSV introduces new task ids
-            renderSettingsPage();
-          }
-
-          if (statusEl) {
-            statusEl.textContent = `Done: ${result.session_id ?? file.name} (user: ${result.user_id ?? "—"})`;
-          }
-        },
-      });
-
-    } catch (ex) {
-      setStatusMessage(statusEl, `Error: ${ex?.message ?? ex}`, "error");
-    } finally {
-      input.value = "";
-    }
-  });
 }
 
 function wireBulkUpload() {
@@ -6877,11 +6922,11 @@ function wireBulkUpload() {
     state.pendingUpload = null;
 
     const statusEl = $("#uploadStatus");
-    if (statusEl) statusEl.textContent = `Uploading bulk CSV: ${file.name}…`;
+    setStatusMessage(statusEl, `Uploading CSV: ${file.name}…`);
 
     try {
       const upload = await apiUploadBulk(file, testId ?? "TEST");
-      if (statusEl) statusEl.textContent = upload.message ?? "Upload successful.";
+      setStatusMessage(statusEl, upload.message ?? "Upload successful.");
 
       await pollUploadJob(upload.job_id, {
         statusEl,
@@ -6910,9 +6955,7 @@ function wireBulkUpload() {
             renderSettingsPage();
           }
 
-          if (statusEl) {
-            statusEl.textContent = `Done: bulk CSV processed (${result.count ?? 0} sessions).`;
-          }
+          setStatusMessage(statusEl, `Done: bulk CSV processed (${result.count ?? 0} sessions).`);
         },
       });
     } catch (ex) {
@@ -7043,11 +7086,11 @@ function wireSettingsSessionFilters() {
 
 // ===== Init =====
 async function init() {
+  wireButtonTooltips();
   wireNavButtons();
   wireTestControls();
   wireModal();
   wireUploadTestModal();
-  wireUpload();
   wireBulkUpload();
   wireSessionFilters();
   wireSettingsSessionFilters();

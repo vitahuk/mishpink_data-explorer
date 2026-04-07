@@ -33,7 +33,7 @@
       </div>
 
       <div class="topbar-right">
-        <button class="btn btn-ghost" id="logoutBtn" type="button" title="Odhlásit se">
+        <button class="btn btn-ghost" id="logoutBtn" type="button" data-tooltip="Log out of the application">
           Logout
         </button>
       </div>
@@ -53,16 +53,6 @@
               
             </p>
           </div>
-          <div class="page-actions dashboard-actions">
-            <button class="upload-chip" id="uploadSingleBtn" type="button" title="Upload CSV (session)">
-              + Upload CSV (single session)
-            </button>
-            <button class="upload-chip" id="uploadBulkBtn" type="button" title="Upload bulk CSV">
-              + Upload bulk CSV (multiple sessions)
-            </button>
-            <input id="csvInput" type="file" accept=".csv" hidden />
-            <input id="bulkCsvInput" type="file" accept=".csv" hidden />
-          </div>
         </div>
 
         <div class="layout-2">
@@ -71,19 +61,18 @@
             <div class="card-head">
               <div class="row" style="align-items:center;">
                 <h2>User experiments</h2>
-                <button class="btn btn-ghost" id="addTestBtn" type="button">+ Add user experiment</button>
+                <button class="btn btn" id="addTestBtn" type="button" data-tooltip="Creates a new user experiment">+ Add user experiment</button>
               </div>
               <div class="muted small">Click to select a user experiment. Click the "Open" button to proceed to the list of sessions.</div>
             </div>
 
             <div class="list" id="testsList"></div>
+            <input id="bulkCsvInput" type="file" accept=".csv" hidden />
 
-            <div class="hint">
-              <div class="hint-title">Hint</div>
-              <div class="muted small">
-                Uploading a large CSV might take a while.
-              </div>
-              <div id="uploadStatus" class="muted small" style="margin-top:8px;"></div>
+            <div class="dashboard-status-divider" aria-hidden="true"></div>
+            <div class="upload-status-block">
+              <div class="muted small upload-status-title hidden" id="uploadStatusTitle">Upload status</div>
+              <div id="uploadStatus" class="muted small hidden"></div>
             </div>
           </section>
 
@@ -123,9 +112,9 @@
 
         <section class="card settings-card">
           <div class="tab-row" id="settingsTabs" role="tablist" aria-label="Nastavení testu">
-            <button class="tab-btn is-active" type="button" role="tab" data-tab="answers" aria-selected="true">Correct answers</button>
-            <button class="tab-btn" type="button" role="tab" data-tab="sessions" aria-selected="false">Edit uploaded sessions</button>
-            <button class="tab-btn" type="button" role="tab" data-tab="user-test" aria-selected="false">User experiment settings</button>
+            <button class="tab-btn is-active" type="button" role="tab" data-tab="answers" aria-selected="true" data-tooltip="Set correct answers for tasks in this experiment">Correct answers</button>
+            <button class="tab-btn" type="button" role="tab" data-tab="sessions" aria-selected="false" data-tooltip="Edit sessions in this experiment">Edit uploaded sessions</button>
+            <button class="tab-btn" type="button" role="tab" data-tab="user-test" aria-selected="false" data-tooltip="You can rename or delete the experiment here">User experiment settings</button>
           </div>
 
           <section class="tab-panel settings-answers-panel" data-panel="answers">
@@ -146,10 +135,10 @@
             <div class="card-foot foot-split">
               <div class="muted small" id="settingsStatus">—</div>
               <div class="row" style="gap:8px;">
-                <button class="btn btn-ghost" id="settingsDownloadAnswersCsvBtn" type="button">Download answers CSV</button>
-                <button class="btn btn-ghost" id="settingsUploadAnswersCsvBtn" type="button">Upload answers CSV</button>
-                <button class="btn btn-ghost" id="settingsDownloadTemplateCsvBtn" type="button">Download template CSV</button>
-                <button class="btn btn-ghost" id="settingsReloadBtn" type="button">Reload</button>
+                <button class="btn btn-ghost" id="settingsDownloadAnswersCsvBtn" type="button" data-tooltip="Download correct answers as a CSV file">Download answers CSV</button>
+                <button class="btn btn-ghost" id="settingsUploadAnswersCsvBtn" type="button" data-tooltip="Upload correct answers from a CSV file">Upload answers CSV</button>
+                <button class="btn btn-ghost" id="settingsDownloadTemplateCsvBtn" type="button" data-tooltip="Download a template CSV file for correct answers">Download template CSV</button>
+                <button class="btn btn-ghost" id="settingsReloadBtn" type="button" data-tooltip="Reload correct answers">Reload</button>
               </div>
             </div>
             <input id="settingsAnswersCsvInput" type="file" accept=".csv" hidden />
@@ -212,7 +201,7 @@
             </div>
 
             <div class="card-foot" style="display:flex; justify-content:flex-end;">
-              <button class="btn btn-danger" id="settingsDeleteUserTestBtn" type="button">Delete user experiment</button>
+              <button class="btn btn-danger" id="settingsDeleteUserTestBtn" type="button" data-tooltip="Permanently deletes this experiment">Delete user experiment</button>
             </div>
           </section>
         </section>
@@ -771,17 +760,16 @@
       <div class="modal-card">
         <div class="modal-head">
           <div>
-            <div class="modal-title" id="uploadTestTitle">Choose a user experiment</div>
-            <div class="muted small">CSV will be uploaded to the selected user experiment.</div>
+            <div class="modal-title" id="uploadTestTitle">Upload data</div>
+            <div class="muted small" id="uploadTestSubtitle">Selected experiment: —</div>
           </div>
           <button class="icon-btn" id="closeUploadTestBtn" type="button" aria-label="Close">✕</button>
         </div>
 
         <div class="modal-body">
-          <label class="filter-field" style="gap:6px;">
-            <span>User experiment</span>
-            <select id="uploadTestSelect"></select>
-          </label>
+          <p class="muted" id="uploadTestMessage">
+            Confirm upload. Text in this popup can be adjusted later.
+          </p>
         </div>
 
         <div class="modal-foot">
@@ -1022,7 +1010,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=4"></script>
 </body>
 
 </html>
