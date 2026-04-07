@@ -333,6 +333,10 @@ p {
   min-width: 0;
 }
 
+.filter-field-button .btn {
+  width: 100%;
+}
+
 .text-area-input {
   border: 1px solid rgba(34, 48, 74, .85);
   border-radius: 10px;
@@ -372,6 +376,11 @@ p {
 .list {
   display: grid;
   gap: 10px;
+}
+
+#sessionsList,
+#groupEditSessionsList {
+  margin-top: 10px;
 }
 
 .dashboard-tests-card {

@@ -5,7 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>MishPink Data Explorer</title>
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=1" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 </head>
@@ -232,7 +232,7 @@
           <div>
             <h1>Sessions</h1>
             <p class="muted">
-              Select a session (a single user's activity log). Metrics and a button to proceed to tasks will appear on the right.
+              List of sessions (a single user's activity log) in this user experiment.
             </p>
           </div>
 
@@ -250,30 +250,104 @@
           <section class="card">
             <div class="card-head">
               <h2>Session List in User experiment</h2>
+              <p class="muted">checkbox = selection for group creation / highlight = view session metrics / double-click = session detail</p>
               <div class="muted small"></div>
               <div class="filter-panel">
+                <div class="filter-actions">
+                  <label class="filter-field" style="min-width:240px;">
+                    <span>Order by</span>
+                    <select id="sessionSortKey"></select>
+                  </label>
+                  <label class="filter-field" style="min-width:140px;">
+                    <span>Direction</span>
+                    <select id="sessionSortDirection">
+                      <option value="asc">Ascending</option>
+                      <option value="desc">Descending</option>
+                    </select>
+                  </label>
+                  <label class="filter-field filter-field-button" style="min-width:170px;">
+                    <span>&nbsp;</span>
+                    <button class="btn btn-ghost" id="sessionVisibleFiltersBtn" type="button" data-tooltip="Choose which filters you want to see">Visible filters</button>
+                  </label>
+                </div>
                 <div class="filter-grid">
-                  <label class="filter-field">
+                  <label class="filter-field" data-filter-key="gender">
                     <span>Gender</span>
                     <select id="sessionFilterGender"></select>
                   </label>
-                  <label class="filter-field">
+                  <label class="filter-field" data-filter-key="ageMin">
                     <span>Min. Age</span>
                     <input id="sessionFilterAgeMin" type="number" inputmode="numeric" min="0" placeholder="e.g. 18" />
                   </label>
-                  <label class="filter-field">
+                  <label class="filter-field" data-filter-key="ageMax">
                     <span>Max. Age</span>
                     <input id="sessionFilterAgeMax" type="number" inputmode="numeric" min="0" placeholder="e.g. 65" />
                   </label>
-                  <label class="filter-field">
+                  <label class="filter-field" data-filter-key="occupation">
                     <span>Occupation</span>
                     <select id="sessionFilterOccupation"></select>
                   </label>
-                  <label class="filter-field">
+                  <label class="filter-field" data-filter-key="nationality">
                     <span>Nationality</span>
                     <select id="sessionFilterNationality"></select>
                   </label>
-                  <label class="filter-field">
+                  <label class="filter-field" data-filter-key="education">
+                    <span>Education</span>
+                    <select id="sessionFilterEducation"></select>
+                  </label>
+                  <label class="filter-field" data-filter-key="device">
+                    <span>Device</span>
+                    <select id="sessionFilterDevice"></select>
+                  </label>
+                  <label class="filter-field" data-filter-key="confidence">
+                    <span>Confidence</span>
+                    <select id="sessionFilterConfidence"></select>
+                  </label>
+                  <label class="filter-field" data-filter-key="paper_maps">
+                    <span>Paper maps</span>
+                    <select id="sessionFilterPaperMaps"></select>
+                  </label>
+                  <label class="filter-field" data-filter-key="computer_maps">
+                    <span>Computer maps</span>
+                    <select id="sessionFilterComputerMaps"></select>
+                  </label>
+                  <label class="filter-field" data-filter-key="mobile_maps">
+                    <span>Mobile maps</span>
+                    <select id="sessionFilterMobileMaps"></select>
+                  </label>
+                  <label class="filter-field" data-filter-key="tasksMin">
+                    <span>Min. tasks</span>
+                    <input id="sessionFilterTasksMin" type="number" min="0" inputmode="numeric" />
+                  </label>
+                  <label class="filter-field" data-filter-key="tasksMax">
+                    <span>Max. tasks</span>
+                    <input id="sessionFilterTasksMax" type="number" min="0" inputmode="numeric" />
+                  </label>
+                  <label class="filter-field" data-filter-key="eventsMin">
+                    <span>Min. events</span>
+                    <input id="sessionFilterEventsMin" type="number" min="0" inputmode="numeric" />
+                  </label>
+                  <label class="filter-field" data-filter-key="eventsMax">
+                    <span>Max. events</span>
+                    <input id="sessionFilterEventsMax" type="number" min="0" inputmode="numeric" />
+                  </label>
+                  <label class="filter-field" data-filter-key="durationMin">
+                    <span>Min. duration (s)</span>
+                    <input id="sessionFilterDurationMin" type="number" min="0" inputmode="numeric" />
+                  </label>
+                  <label class="filter-field" data-filter-key="durationMax">
+                    <span>Max. duration (s)</span>
+                    <input id="sessionFilterDurationMax" type="number" min="0" inputmode="numeric" />
+                  </label>
+                  <label class="filter-field" data-filter-key="accuracyMin">
+                    <span>Min. accuracy (%)</span>
+                    <input id="sessionFilterAccuracyMin" type="number" min="0" max="100" inputmode="numeric" />
+                  </label>
+                  <label class="filter-field" data-filter-key="accuracyMax">
+                    <span>Max. accuracy (%)</span>
+                    <input id="sessionFilterAccuracyMax" type="number" min="0" max="100" inputmode="numeric" />
+                  </label>
+                  <label class="filter-field" data-filter-key="userIdQuery">
                     <span>Search User ID</span>
                     <input id="sessionFilterUserId" type="search" placeholder="e.g. 12345" />
                   </label>
@@ -403,16 +477,47 @@
                 <div class="muted small">! = candidate for removal.</div>
               </div>
               <div class="filter-panel">
-                <label class="filter-field">
+                <div class="filter-actions">
+                  <label class="filter-field" style="min-width:240px;">
+                    <span>Order by</span>
+                    <select id="groupEditSortKey"></select>
+                  </label>
+                  <label class="filter-field" style="min-width:140px;">
+                    <span>Direction</span>
+                    <select id="groupEditSortDirection">
+                      <option value="asc">Ascending</option>
+                      <option value="desc">Descending</option>
+                    </select>
+                  </label>
+                  <label class="filter-field filter-field-button" style="min-width:170px;">
+                    <span>&nbsp;</span>
+                    <button class="btn btn-ghost" id="groupEditVisibleFiltersBtn" type="button" data-tooltip="Choose which filters you want to see">Visible filters</button>
+                  </label>
+                </div>
+                <label class="filter-field" data-filter-key="query">
                   <span>Search by user/session</span>
                   <input id="groupEditSearchInput" type="search" placeholder="e.g., 12345 or session_01" />
                 </label>
                 <div class="filter-grid">
-                  <label class="filter-field"><span>Gender</span><select id="groupEditFilterGender"></select></label>
-                  <label class="filter-field"><span>Min. Age</span><input id="groupEditFilterAgeMin" type="number" min="0" /></label>
-                  <label class="filter-field"><span>Max. Age</span><input id="groupEditFilterAgeMax" type="number" min="0" /></label>
-                  <label class="filter-field"><span>Occupation</span><select id="groupEditFilterOccupation"></select></label>
-                  <label class="filter-field"><span>Nationality</span><select id="groupEditFilterNationality"></select></label>
+                  <label class="filter-field" data-filter-key="gender"><span>Gender</span><select id="groupEditFilterGender"></select></label>
+                  <label class="filter-field" data-filter-key="ageMin"><span>Min. Age</span><input id="groupEditFilterAgeMin" type="number" min="0" /></label>
+                  <label class="filter-field" data-filter-key="ageMax"><span>Max. Age</span><input id="groupEditFilterAgeMax" type="number" min="0" /></label>
+                  <label class="filter-field" data-filter-key="occupation"><span>Occupation</span><select id="groupEditFilterOccupation"></select></label>
+                  <label class="filter-field" data-filter-key="nationality"><span>Nationality</span><select id="groupEditFilterNationality"></select></label>
+                  <label class="filter-field" data-filter-key="education"><span>Education</span><select id="groupEditFilterEducation"></select></label>
+                  <label class="filter-field" data-filter-key="device"><span>Device</span><select id="groupEditFilterDevice"></select></label>
+                  <label class="filter-field" data-filter-key="confidence"><span>Confidence</span><select id="groupEditFilterConfidence"></select></label>
+                  <label class="filter-field" data-filter-key="paper_maps"><span>Paper maps</span><select id="groupEditFilterPaperMaps"></select></label>
+                  <label class="filter-field" data-filter-key="computer_maps"><span>Computer maps</span><select id="groupEditFilterComputerMaps"></select></label>
+                  <label class="filter-field" data-filter-key="mobile_maps"><span>Mobile maps</span><select id="groupEditFilterMobileMaps"></select></label>
+                  <label class="filter-field" data-filter-key="tasksMin"><span>Min. tasks</span><input id="groupEditFilterTasksMin" type="number" min="0" /></label>
+                  <label class="filter-field" data-filter-key="tasksMax"><span>Max. tasks</span><input id="groupEditFilterTasksMax" type="number" min="0" /></label>
+                  <label class="filter-field" data-filter-key="eventsMin"><span>Min. events</span><input id="groupEditFilterEventsMin" type="number" min="0" /></label>
+                  <label class="filter-field" data-filter-key="eventsMax"><span>Max. events</span><input id="groupEditFilterEventsMax" type="number" min="0" /></label>
+                  <label class="filter-field" data-filter-key="durationMin"><span>Min. duration (s)</span><input id="groupEditFilterDurationMin" type="number" min="0" /></label>
+                  <label class="filter-field" data-filter-key="durationMax"><span>Max. duration (s)</span><input id="groupEditFilterDurationMax" type="number" min="0" /></label>
+                  <label class="filter-field" data-filter-key="accuracyMin"><span>Min. accuracy (%)</span><input id="groupEditFilterAccuracyMin" type="number" min="0" max="100" /></label>
+                  <label class="filter-field" data-filter-key="accuracyMax"><span>Max. accuracy (%)</span><input id="groupEditFilterAccuracyMax" type="number" min="0" max="100" /></label>
                 </div>
                 <div class="filter-actions">
                   <button class="btn btn-ghost" id="groupEditOnlyFlaggedBtn" type="button" aria-pressed="false">Only flagged !</button>
@@ -999,6 +1104,26 @@
     </div>
   </div>
 
+  <div class="modal hidden" id="visibleFiltersModal" role="dialog" aria-modal="true" aria-labelledby="visibleFiltersModalTitle">
+    <div class="modal-backdrop" id="visibleFiltersModalBackdrop"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title" id="visibleFiltersModalTitle">Visible filters</div>
+          <div class="muted small" id="visibleFiltersModalSubtitle">Choose which filters should be shown.</div>
+        </div>
+        <button class="icon-btn" id="closeVisibleFiltersModalBtn" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="visibleFiltersModalBody" class="chip-picker"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="closeVisibleFiltersModalBtn2" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+
   <footer class="app-footer" aria-label="Footer">
     <div class="app-footer-content">
       <p>MishPink Data Explorer, version 1.2 (April 2026)</p>
@@ -1010,7 +1135,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="/static/app.js?v=4"></script>
+  <script src="/static/app.js?v=5"></script>
 </body>
 
 </html>

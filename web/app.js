@@ -176,9 +176,71 @@ const GROUP_RATIO_STAT_OPTIONS = [
   { key: "stddev", label: "Std. deviation" },
 ];
 
+const SESSION_SORT_OPTIONS = [
+  { key: "default", label: "Default", mode: "default" },
+  { key: "user_id", label: "User ID", mode: "alpha" },
+  { key: "age", label: "Age", mode: "numeric" },
+  { key: "gender", label: "Gender", mode: "alpha" },
+  { key: "occupation", label: "Occupation", mode: "alpha" },
+  { key: "nationality", label: "Nationality", mode: "alpha" },
+  { key: "tasks_count", label: "Number of tasks", mode: "numeric" },
+  { key: "events_total", label: "Number of events", mode: "numeric" },
+  { key: "duration_ms", label: "Total completion time", mode: "numeric" },
+  { key: "accuracy", label: "Average answer accuracy", mode: "numeric" },
+];
+const SESSION_FILTER_VISIBILITY_OPTIONS = [
+  { key: "gender", label: "Gender" },
+  { key: "ageMin", label: "Min. Age" },
+  { key: "ageMax", label: "Max. Age" },
+  { key: "occupation", label: "Occupation" },
+  { key: "nationality", label: "Nationality" },
+  { key: "education", label: "Education" },
+  { key: "device", label: "Device" },
+  { key: "confidence", label: "Confidence" },
+  { key: "paper_maps", label: "Paper maps" },
+  { key: "computer_maps", label: "Computer maps" },
+  { key: "mobile_maps", label: "Mobile maps" },
+  { key: "tasksMin", label: "Min. tasks" },
+  { key: "tasksMax", label: "Max. tasks" },
+  { key: "eventsMin", label: "Min. events" },
+  { key: "eventsMax", label: "Max. events" },
+  { key: "durationMin", label: "Min. duration (s)" },
+  { key: "durationMax", label: "Max. duration (s)" },
+  { key: "accuracyMin", label: "Min. accuracy (%)" },
+  { key: "accuracyMax", label: "Max. accuracy (%)" },
+  { key: "userIdQuery", label: "Search User ID" },
+];
+const GROUP_EDIT_FILTER_VISIBILITY_OPTIONS = [
+  { key: "query", label: "Search user/session" },
+  { key: "gender", label: "Gender" },
+  { key: "ageMin", label: "Min. Age" },
+  { key: "ageMax", label: "Max. Age" },
+  { key: "occupation", label: "Occupation" },
+  { key: "nationality", label: "Nationality" },
+  { key: "education", label: "Education" },
+  { key: "device", label: "Device" },
+  { key: "confidence", label: "Confidence" },
+  { key: "paper_maps", label: "Paper maps" },
+  { key: "computer_maps", label: "Computer maps" },
+  { key: "mobile_maps", label: "Mobile maps" },
+  { key: "tasksMin", label: "Min. tasks" },
+  { key: "tasksMax", label: "Max. tasks" },
+  { key: "eventsMin", label: "Min. events" },
+  { key: "eventsMax", label: "Max. events" },
+  { key: "durationMin", label: "Min. duration (s)" },
+  { key: "durationMax", label: "Max. duration (s)" },
+  { key: "accuracyMin", label: "Min. accuracy (%)" },
+  { key: "accuracyMax", label: "Max. accuracy (%)" },
+];
+
+const DEFAULT_VISIBLE_SESSION_FILTERS = ["userIdQuery", "gender", "ageMin", "ageMax"];
+const DEFAULT_VISIBLE_GROUP_EDIT_FILTERS = ["query", "gender", "ageMin", "ageMax"];
+
 const TESTS_STORAGE_KEY = "maptrack_tests";
 const SELECTED_TEST_STORAGE_KEY = "maptrack_selected_test";
 const GROUP_DRAFT_SELECTION_KEY = "maptrack_group_selection";
+const SESSION_VISIBLE_FILTERS_KEY = "maptrack_visible_filters_sessions";
+const GROUP_EDIT_VISIBLE_FILTERS_KEY = "maptrack_visible_filters_group_edit";
 
 
 // ===== App State =====
@@ -231,6 +293,20 @@ const state = {
     ageMax: "",
     occupation: "",
     nationality: "",
+    education: "",
+    device: "",
+    confidence: "",
+    paper_maps: "",
+    computer_maps: "",
+    mobile_maps: "",
+    tasksMin: "",
+    tasksMax: "",
+    eventsMin: "",
+    eventsMax: "",
+    durationMin: "",
+    durationMax: "",
+    accuracyMin: "",
+    accuracyMax: "",
     query: "",
   },
   pendingUpload: null,
@@ -240,8 +316,27 @@ const state = {
     ageMax: "",
     occupation: "",
     nationality: "",
+    education: "",
+    device: "",
+    confidence: "",
+    paper_maps: "",
+    computer_maps: "",
+    mobile_maps: "",
+    tasksMin: "",
+    tasksMax: "",
+    eventsMin: "",
+    eventsMax: "",
+    durationMin: "",
+    durationMax: "",
+    accuracyMin: "",
+    accuracyMax: "",
     userIdQuery: "",
   },
+  sessionSort: { key: "default", direction: "asc" },
+  groupEditSort: { key: "default", direction: "asc" },
+  visibleFiltersModalContext: "sessions",
+  visibleSessionFilters: [...DEFAULT_VISIBLE_SESSION_FILTERS],
+  visibleGroupEditFilters: [...DEFAULT_VISIBLE_GROUP_EDIT_FILTERS],
   // answers cache: testId -> { taskId -> text }
   correctAnswers: {},
   settingsTab: "answers",
@@ -1116,16 +1211,103 @@ function parseOptionalNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function loadVisibleFilters(storageKey, defaults) {
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return [...defaults];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [...defaults];
+    const allowed = new Set(defaults);
+    const valid = parsed.filter((item) => allowed.has(item));
+    return valid.length ? valid : [...defaults];
+  } catch {
+    return [...defaults];
+  }
+}
+
+function saveVisibleFilters(storageKey, values) {
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(values));
+  } catch {
+    // no-op
+  }
+}
+
+function getSessionSortValue(session, key) {
+  const soc = getSocDemo(session);
+  const stats = session?.stats?.session ?? {};
+  const accuracy = session?.stats?.answers_eval?.summary?.accuracy;
+  const mapping = {
+    default: null,
+    user_id: session?.user_id,
+    age: soc.age,
+    gender: soc.gender,
+    occupation: soc.occupation,
+    nationality: soc.nationality,
+    tasks_count: stats.tasks_count ?? (Array.isArray(session?.tasks) ? session.tasks.length : null),
+    events_total: stats.events_total,
+    duration_ms: stats.duration_ms,
+    accuracy,
+  };
+  return mapping[key];
+}
+
+function sortSessions(sessions, sortConfig = {}) {
+  const key = sortConfig.key || "default";
+  const direction = sortConfig.direction === "desc" ? "desc" : "asc";
+  const option = SESSION_SORT_OPTIONS.find((x) => x.key === key) ?? SESSION_SORT_OPTIONS[0];
+  const mode = option.mode;
+  if (mode === "default") return [...sessions];
+  const factor = direction === "desc" ? -1 : 1;
+  return [...sessions].sort((a, b) => {
+    const av = getSessionSortValue(a, key);
+    const bv = getSessionSortValue(b, key);
+    if (mode === "numeric") {
+      const an = Number(av);
+      const bn = Number(bv);
+      const aOk = Number.isFinite(an);
+      const bOk = Number.isFinite(bn);
+      if (!aOk && !bOk) return 0;
+      if (!aOk) return 1;
+      if (!bOk) return -1;
+      if (an === bn) return 0;
+      return an > bn ? factor : -factor;
+    }
+    const as = String(av ?? "").trim();
+    const bs = String(bv ?? "").trim();
+    if (!as && !bs) return 0;
+    if (!as) return 1;
+    if (!bs) return -1;
+    return as.localeCompare(bs, "cs", { sensitivity: "base", numeric: true }) * factor;
+  });
+}
+
 function getSessionFilterOptions(sessions) {
   const gender = new Set();
   const occupation = new Set();
   const nationality = new Set();
+  const education = new Set();
+  const device = new Set();
+  const confidence = new Set();
+  const paperMaps = new Set();
+  const computerMaps = new Set();
+  const mobileMaps = new Set();
 
   sessions.forEach((session) => {
     const soc = getSocDemo(session);
     if (soc.gender) gender.add(String(soc.gender));
     if (soc.occupation) occupation.add(String(soc.occupation));
     if (soc.nationality) nationality.add(String(soc.nationality));
+    if (soc.education) education.add(String(soc.education));
+    if (soc.device) device.add(String(soc.device));
+    const confidenceLabel = formatBooleanCharacteristic(soc.confidence);
+    if (confidenceLabel !== "—") confidence.add(confidenceLabel);
+    const paperMapsLabel = formatBooleanCharacteristic(soc.paper_maps);
+    if (paperMapsLabel !== "—") paperMaps.add(paperMapsLabel);
+    const computerMapsLabel = formatBooleanCharacteristic(soc.computer_maps);
+    if (computerMapsLabel !== "—") computerMaps.add(computerMapsLabel);
+    const mobileMapsLabel = formatBooleanCharacteristic(soc.mobile_maps);
+    if (mobileMapsLabel !== "—") mobileMaps.add(mobileMapsLabel);
   });
 
   const sort = (a, b) => a.localeCompare(b, "cs", { sensitivity: "base" });
@@ -1133,6 +1315,12 @@ function getSessionFilterOptions(sessions) {
     gender: Array.from(gender).sort(sort),
     occupation: Array.from(occupation).sort(sort),
     nationality: Array.from(nationality).sort(sort),
+    education: Array.from(education).sort(sort),
+    device: Array.from(device).sort(sort),
+    confidence: Array.from(confidence).sort(sort),
+    paper_maps: Array.from(paperMaps).sort(sort),
+    computer_maps: Array.from(computerMaps).sort(sort),
+    mobile_maps: Array.from(mobileMaps).sort(sort),
   };
 }
 
@@ -1140,11 +1328,25 @@ function renderSessionFilterControls() {
   const genderEl = $("#sessionFilterGender");
   const occupationEl = $("#sessionFilterOccupation");
   const nationalityEl = $("#sessionFilterNationality");
+  const educationEl = $("#sessionFilterEducation");
+  const deviceEl = $("#sessionFilterDevice");
+  const confidenceEl = $("#sessionFilterConfidence");
+  const paperMapsEl = $("#sessionFilterPaperMaps");
+  const computerMapsEl = $("#sessionFilterComputerMaps");
+  const mobileMapsEl = $("#sessionFilterMobileMaps");
+  const tasksMinEl = $("#sessionFilterTasksMin");
+  const tasksMaxEl = $("#sessionFilterTasksMax");
+  const eventsMinEl = $("#sessionFilterEventsMin");
+  const eventsMaxEl = $("#sessionFilterEventsMax");
+  const durationMinEl = $("#sessionFilterDurationMin");
+  const durationMaxEl = $("#sessionFilterDurationMax");
+  const accuracyMinEl = $("#sessionFilterAccuracyMin");
+  const accuracyMaxEl = $("#sessionFilterAccuracyMax");
   const ageMinEl = $("#sessionFilterAgeMin");
   const ageMaxEl = $("#sessionFilterAgeMax");
   const userIdEl = $("#sessionFilterUserId");
 
-  if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !userIdEl) return;
+  if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !userIdEl || !educationEl || !deviceEl || !confidenceEl || !paperMapsEl || !computerMapsEl || !mobileMapsEl || !tasksMinEl || !tasksMaxEl || !eventsMinEl || !eventsMaxEl || !durationMinEl || !durationMaxEl || !accuracyMinEl || !accuracyMaxEl) return;
 
   const options = getSessionFilterOptions(getSessionsForSelectedTest());
   const makeOptions = (values, emptyLabel) => {
@@ -1155,46 +1357,139 @@ function renderSessionFilterControls() {
   genderEl.innerHTML = makeOptions(options.gender, "All");
   occupationEl.innerHTML = makeOptions(options.occupation, "All");
   nationalityEl.innerHTML = makeOptions(options.nationality, "All");
+  educationEl.innerHTML = makeOptions(options.education, "All");
+  deviceEl.innerHTML = makeOptions(options.device, "All");
+  confidenceEl.innerHTML = makeOptions(options.confidence, "All");
+  paperMapsEl.innerHTML = makeOptions(options.paper_maps, "All");
+  computerMapsEl.innerHTML = makeOptions(options.computer_maps, "All");
+  mobileMapsEl.innerHTML = makeOptions(options.mobile_maps, "All");
 
   genderEl.value = state.sessionFilters.gender;
   occupationEl.value = state.sessionFilters.occupation;
   nationalityEl.value = state.sessionFilters.nationality;
+  educationEl.value = state.sessionFilters.education;
+  deviceEl.value = state.sessionFilters.device;
+  confidenceEl.value = state.sessionFilters.confidence;
+  paperMapsEl.value = state.sessionFilters.paper_maps;
+  computerMapsEl.value = state.sessionFilters.computer_maps;
+  mobileMapsEl.value = state.sessionFilters.mobile_maps;
+  tasksMinEl.value = state.sessionFilters.tasksMin;
+  tasksMaxEl.value = state.sessionFilters.tasksMax;
+  eventsMinEl.value = state.sessionFilters.eventsMin;
+  eventsMaxEl.value = state.sessionFilters.eventsMax;
+  durationMinEl.value = state.sessionFilters.durationMin;
+  durationMaxEl.value = state.sessionFilters.durationMax;
+  accuracyMinEl.value = state.sessionFilters.accuracyMin;
+  accuracyMaxEl.value = state.sessionFilters.accuracyMax;
   ageMinEl.value = state.sessionFilters.ageMin;
   ageMaxEl.value = state.sessionFilters.ageMax;
   userIdEl.value = state.sessionFilters.userIdQuery;
+  renderSessionSortControls();
+  applySessionFilterVisibility();
+}
+
+function renderSessionSortControls() {
+  const keyEl = $("#sessionSortKey");
+  const dirEl = $("#sessionSortDirection");
+  if (!keyEl || !dirEl) return;
+  keyEl.innerHTML = SESSION_SORT_OPTIONS.map((opt) => `<option value="${escapeHtml(opt.key)}">${escapeHtml(opt.label)}</option>`).join("");
+  keyEl.value = state.sessionSort.key;
+  dirEl.value = state.sessionSort.direction;
+}
+
+function applySessionFilterVisibility() {
+  const selected = new Set(state.visibleSessionFilters ?? []);
+  $$("#view-individual [data-filter-key]").forEach((el) => {
+    const key = el.dataset.filterKey;
+    el.classList.toggle("hidden", !selected.has(key));
+  });
 }
 
 function applySessionFilters(sessions) {
-  return applyGenericSessionFilters(sessions, {
+  const filtered = applyGenericSessionFilters(sessions, {
     gender: state.sessionFilters.gender,
     occupation: state.sessionFilters.occupation,
     nationality: state.sessionFilters.nationality,
+    education: state.sessionFilters.education,
+    device: state.sessionFilters.device,
+    confidence: state.sessionFilters.confidence,
+    paper_maps: state.sessionFilters.paper_maps,
+    computer_maps: state.sessionFilters.computer_maps,
+    mobile_maps: state.sessionFilters.mobile_maps,
+    tasksMin: state.sessionFilters.tasksMin,
+    tasksMax: state.sessionFilters.tasksMax,
+    eventsMin: state.sessionFilters.eventsMin,
+    eventsMax: state.sessionFilters.eventsMax,
+    durationMin: state.sessionFilters.durationMin,
+    durationMax: state.sessionFilters.durationMax,
+    accuracyMin: state.sessionFilters.accuracyMin,
+    accuracyMax: state.sessionFilters.accuracyMax,
     ageMin: state.sessionFilters.ageMin,
     ageMax: state.sessionFilters.ageMax,
     query: state.sessionFilters.userIdQuery,
   });
+  return sortSessions(filtered, state.sessionSort);
 }
 
 function applyGenericSessionFilters(sessions, filters = {}) {
   const genderFilter = normalizeFilterValue(filters.gender);
   const occupationFilter = normalizeFilterValue(filters.occupation);
   const nationalityFilter = normalizeFilterValue(filters.nationality);
-  const ageMin = parseOptionalNumber(filters.ageMin);
-  const ageMax = parseOptionalNumber(filters.ageMax);
+  const educationFilter = normalizeFilterValue(filters.education);
+  const deviceFilter = normalizeFilterValue(filters.device);
+  const confidenceFilter = normalizeFilterValue(filters.confidence);
+  const paperMapsFilter = normalizeFilterValue(filters.paper_maps);
+  const computerMapsFilter = normalizeFilterValue(filters.computer_maps);
+  const mobileMapsFilter = normalizeFilterValue(filters.mobile_maps);
+  let ageMin = parseOptionalNumber(filters.ageMin);
+  let ageMax = parseOptionalNumber(filters.ageMax);
+  let tasksMin = parseOptionalNumber(filters.tasksMin);
+  let tasksMax = parseOptionalNumber(filters.tasksMax);
+  let eventsMin = parseOptionalNumber(filters.eventsMin);
+  let eventsMax = parseOptionalNumber(filters.eventsMax);
+  let durationMin = parseOptionalNumber(filters.durationMin);
+  let durationMax = parseOptionalNumber(filters.durationMax);
+  let accuracyMin = parseOptionalNumber(filters.accuracyMin);
+  let accuracyMax = parseOptionalNumber(filters.accuracyMax);
+  if (ageMin !== null && ageMax !== null && ageMin > ageMax) {
+    [ageMin, ageMax] = [ageMax, ageMin];
+  }
+  if (tasksMin !== null && tasksMax !== null && tasksMin > tasksMax) [tasksMin, tasksMax] = [tasksMax, tasksMin];
+  if (eventsMin !== null && eventsMax !== null && eventsMin > eventsMax) [eventsMin, eventsMax] = [eventsMax, eventsMin];
+  if (durationMin !== null && durationMax !== null && durationMin > durationMax) [durationMin, durationMax] = [durationMax, durationMin];
+  if (accuracyMin !== null && accuracyMax !== null && accuracyMin > accuracyMax) [accuracyMin, accuracyMax] = [accuracyMax, accuracyMin];
   const query = normalizeSearchValue(filters.query);
 
   return sessions.filter((session) => {
     const soc = getSocDemo(session);
+    const stats = session?.stats?.session ?? {};
+    const answersSummary = session?.stats?.answers_eval?.summary ?? {};
     const gender = normalizeFilterValue(soc.gender);
     const occupation = normalizeFilterValue(soc.occupation);
     const nationality = normalizeFilterValue(soc.nationality);
+    const education = normalizeFilterValue(soc.education);
+    const device = normalizeFilterValue(soc.device);
+    const confidence = normalizeFilterValue(formatBooleanCharacteristic(soc.confidence));
+    const paperMaps = normalizeFilterValue(formatBooleanCharacteristic(soc.paper_maps));
+    const computerMaps = normalizeFilterValue(formatBooleanCharacteristic(soc.computer_maps));
+    const mobileMaps = normalizeFilterValue(formatBooleanCharacteristic(soc.mobile_maps));
     const age = parseOptionalNumber(soc.age);
+    const tasksCount = parseOptionalNumber(stats.tasks_count ?? (Array.isArray(session?.tasks) ? session.tasks.length : null));
+    const eventsTotal = parseOptionalNumber(stats.events_total);
+    const durationSec = parseOptionalNumber(stats.duration_ms) !== null ? Number(stats.duration_ms) / 1000 : null;
+    const accuracyPercent = parseOptionalNumber(answersSummary.accuracy) !== null ? Number(answersSummary.accuracy) * 100 : null;
     const userId = normalizeSearchValue(session.user_id);
     const sessionId = normalizeSearchValue(session.session_id);
 
     if (genderFilter && genderFilter !== gender) return false;
     if (occupationFilter && occupationFilter !== occupation) return false;
     if (nationalityFilter && nationalityFilter !== nationality) return false;
+    if (educationFilter && educationFilter !== education) return false;
+    if (deviceFilter && deviceFilter !== device) return false;
+    if (confidenceFilter && confidenceFilter !== confidence) return false;
+    if (paperMapsFilter && paperMapsFilter !== paperMaps) return false;
+    if (computerMapsFilter && computerMapsFilter !== computerMaps) return false;
+    if (mobileMapsFilter && mobileMapsFilter !== mobileMaps) return false;
     if (query && !userId.includes(query) && !sessionId.includes(query)) return false;
 
     if (ageMin !== null || ageMax !== null) {
@@ -1202,9 +1497,34 @@ function applyGenericSessionFilters(sessions, filters = {}) {
       if (ageMin !== null && age < ageMin) return false;
       if (ageMax !== null && age > ageMax) return false;
     }
-
+    if (tasksMin !== null || tasksMax !== null) {
+      if (tasksCount === null) return false;
+      if (tasksMin !== null && tasksCount < tasksMin) return false;
+      if (tasksMax !== null && tasksCount > tasksMax) return false;
+    }
+    if (eventsMin !== null || eventsMax !== null) {
+      if (eventsTotal === null) return false;
+      if (eventsMin !== null && eventsTotal < eventsMin) return false;
+      if (eventsMax !== null && eventsTotal > eventsMax) return false;
+    }
+    if (durationMin !== null || durationMax !== null) {
+      if (durationSec === null) return false;
+      if (durationMin !== null && durationSec < durationMin) return false;
+      if (durationMax !== null && durationSec > durationMax) return false;
+    }
+    if (accuracyMin !== null || accuracyMax !== null) {
+      if (accuracyPercent === null) return false;
+      if (accuracyMin !== null && accuracyPercent < accuracyMin) return false;
+      if (accuracyMax !== null && accuracyPercent > accuracyMax) return false;
+    }
     return true;
   });
+}
+
+function formatSortSummary(sortConfig) {
+  const opt = SESSION_SORT_OPTIONS.find((x) => x.key === sortConfig?.key) ?? SESSION_SORT_OPTIONS[0];
+  const dir = sortConfig?.direction === "desc" ? "desc" : "asc";
+  return `${opt.label} (${dir})`;
 }
 
 function renderSessionsList() {
@@ -1229,7 +1549,7 @@ function renderSessionsList() {
   const filteredSessions = applySessionFilters(sessions);
   if (summaryEl) {
     const selectedCount = (state.selectedSessionIds ?? []).filter((sid) => sessions.some((s) => s.session_id === sid)).length;
-    summaryEl.textContent = `Showing ${filteredSessions.length} z ${sessions.length} · Selected ${selectedCount}`;
+    summaryEl.textContent = `Showing ${filteredSessions.length} of ${sessions.length} · Selected ${selectedCount} · Order by ${formatSortSummary(state.sessionSort)}`;
   }
 
   if (!filteredSessions.length) {
@@ -5777,18 +6097,32 @@ function getGroupEditFilteredSessions() {
     const flagged = new Set(state.groupEditFlaggedSessionIds ?? []);
     filtered = filtered.filter((s) => flagged.has(s.session_id));
   }
-  return filtered;
+  return sortSessions(filtered, state.groupEditSort);
 }
 
 function renderGroupEditFilterControls(sessions) {
   const genderEl = $("#groupEditFilterGender");
   const occupationEl = $("#groupEditFilterOccupation");
   const nationalityEl = $("#groupEditFilterNationality");
+  const educationEl = $("#groupEditFilterEducation");
+  const deviceEl = $("#groupEditFilterDevice");
+  const confidenceEl = $("#groupEditFilterConfidence");
+  const paperMapsEl = $("#groupEditFilterPaperMaps");
+  const computerMapsEl = $("#groupEditFilterComputerMaps");
+  const mobileMapsEl = $("#groupEditFilterMobileMaps");
+  const tasksMinEl = $("#groupEditFilterTasksMin");
+  const tasksMaxEl = $("#groupEditFilterTasksMax");
+  const eventsMinEl = $("#groupEditFilterEventsMin");
+  const eventsMaxEl = $("#groupEditFilterEventsMax");
+  const durationMinEl = $("#groupEditFilterDurationMin");
+  const durationMaxEl = $("#groupEditFilterDurationMax");
+  const accuracyMinEl = $("#groupEditFilterAccuracyMin");
+  const accuracyMaxEl = $("#groupEditFilterAccuracyMax");
   const ageMinEl = $("#groupEditFilterAgeMin");
   const ageMaxEl = $("#groupEditFilterAgeMax");
   const searchEl = $("#groupEditSearchInput");
   const onlyFlaggedBtn = $("#groupEditOnlyFlaggedBtn");
-  if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !searchEl || !onlyFlaggedBtn) return;
+  if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !searchEl || !onlyFlaggedBtn || !educationEl || !deviceEl || !confidenceEl || !paperMapsEl || !computerMapsEl || !mobileMapsEl || !tasksMinEl || !tasksMaxEl || !eventsMinEl || !eventsMaxEl || !durationMinEl || !durationMaxEl || !accuracyMinEl || !accuracyMaxEl) return;
 
   const options = getSessionFilterOptions(sessions);
   const makeOptions = (values, emptyLabel) => {
@@ -5799,15 +6133,101 @@ function renderGroupEditFilterControls(sessions) {
   genderEl.innerHTML = makeOptions(options.gender, "All");
   occupationEl.innerHTML = makeOptions(options.occupation, "All");
   nationalityEl.innerHTML = makeOptions(options.nationality, "All");
+  educationEl.innerHTML = makeOptions(options.education, "All");
+  deviceEl.innerHTML = makeOptions(options.device, "All");
+  confidenceEl.innerHTML = makeOptions(options.confidence, "All");
+  paperMapsEl.innerHTML = makeOptions(options.paper_maps, "All");
+  computerMapsEl.innerHTML = makeOptions(options.computer_maps, "All");
+  mobileMapsEl.innerHTML = makeOptions(options.mobile_maps, "All");
 
   genderEl.value = state.groupEditFilters.gender;
   occupationEl.value = state.groupEditFilters.occupation;
   nationalityEl.value = state.groupEditFilters.nationality;
+  educationEl.value = state.groupEditFilters.education;
+  deviceEl.value = state.groupEditFilters.device;
+  confidenceEl.value = state.groupEditFilters.confidence;
+  paperMapsEl.value = state.groupEditFilters.paper_maps;
+  computerMapsEl.value = state.groupEditFilters.computer_maps;
+  mobileMapsEl.value = state.groupEditFilters.mobile_maps;
+  tasksMinEl.value = state.groupEditFilters.tasksMin;
+  tasksMaxEl.value = state.groupEditFilters.tasksMax;
+  eventsMinEl.value = state.groupEditFilters.eventsMin;
+  eventsMaxEl.value = state.groupEditFilters.eventsMax;
+  durationMinEl.value = state.groupEditFilters.durationMin;
+  durationMaxEl.value = state.groupEditFilters.durationMax;
+  accuracyMinEl.value = state.groupEditFilters.accuracyMin;
+  accuracyMaxEl.value = state.groupEditFilters.accuracyMax;
   ageMinEl.value = state.groupEditFilters.ageMin;
   ageMaxEl.value = state.groupEditFilters.ageMax;
   searchEl.value = state.groupEditFilters.query;
   onlyFlaggedBtn.setAttribute("aria-pressed", state.groupEditShowOnlyFlagged ? "true" : "false");
   onlyFlaggedBtn.classList.toggle("is-active", !!state.groupEditShowOnlyFlagged);
+  renderGroupEditSortControls();
+  applyGroupEditFilterVisibility();
+}
+
+function renderGroupEditSortControls() {
+  const keyEl = $("#groupEditSortKey");
+  const dirEl = $("#groupEditSortDirection");
+  if (!keyEl || !dirEl) return;
+  keyEl.innerHTML = SESSION_SORT_OPTIONS.map((opt) => `<option value="${escapeHtml(opt.key)}">${escapeHtml(opt.label)}</option>`).join("");
+  keyEl.value = state.groupEditSort.key;
+  dirEl.value = state.groupEditSort.direction;
+}
+
+function applyGroupEditFilterVisibility() {
+  const selected = new Set(state.visibleGroupEditFilters ?? []);
+  $$("#view-group-edit [data-filter-key]").forEach((el) => {
+    const key = el.dataset.filterKey;
+    el.classList.toggle("hidden", !selected.has(key));
+  });
+}
+
+function openVisibleFiltersModal(context) {
+  state.visibleFiltersModalContext = context === "groupEdit" ? "groupEdit" : "sessions";
+  const titleEl = $("#visibleFiltersModalTitle");
+  const subtitleEl = $("#visibleFiltersModalSubtitle");
+  if (titleEl) titleEl.textContent = "Visible filters";
+  if (subtitleEl) subtitleEl.textContent = "Choose which filters you want to see. This only changes the visibility of filters, not their values.";
+  renderVisibleFiltersModalBody();
+  show($("#visibleFiltersModal"));
+}
+
+function closeVisibleFiltersModal() {
+  hide($("#visibleFiltersModal"));
+}
+
+function renderVisibleFiltersModalBody() {
+  const bodyEl = $("#visibleFiltersModalBody");
+  if (!bodyEl) return;
+  const isGroupEdit = state.visibleFiltersModalContext === "groupEdit";
+  const options = isGroupEdit ? GROUP_EDIT_FILTER_VISIBILITY_OPTIONS : SESSION_FILTER_VISIBILITY_OPTIONS;
+  const selectedValues = isGroupEdit ? state.visibleGroupEditFilters : state.visibleSessionFilters;
+  const selected = new Set(selectedValues ?? []);
+  bodyEl.innerHTML = options.map((opt) => {
+    const isSelected = selected.has(opt.key);
+    const active = isSelected ? "is-selected" : "is-unselected";
+    return `<button class="chip group-edit-metric-chip ${active}" type="button" data-role="visible-filter-chip" data-key="${escapeHtml(opt.key)}" aria-pressed="${isSelected ? "true" : "false"}">${escapeHtml(opt.label)}</button>`;
+  }).join("");
+  $$("#visibleFiltersModalBody [data-role='visible-filter-chip']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.key;
+      const set = new Set(isGroupEdit ? state.visibleGroupEditFilters : state.visibleSessionFilters);
+      if (set.has(key)) set.delete(key); else set.add(key);
+      const allKeys = options.map((x) => x.key);
+      const next = allKeys.filter((x) => set.has(x));
+      if (isGroupEdit) {
+        state.visibleGroupEditFilters = next;
+        saveVisibleFilters(GROUP_EDIT_VISIBLE_FILTERS_KEY, next);
+        applyGroupEditFilterVisibility();
+      } else {
+        state.visibleSessionFilters = next;
+        saveVisibleFilters(SESSION_VISIBLE_FILTERS_KEY, next);
+        applySessionFilterVisibility();
+      }
+      renderVisibleFiltersModalBody();
+    });
+  });
 }
 
 const SESSION_METRIC_OPTIONS = [
@@ -5924,7 +6344,7 @@ function renderGroupEditSessionsList() {
   if (summaryEl) {
     const selectedCount = sessions.filter((x) => selectedSet.has(x.session_id)).length;
     const flaggedCount = sessions.filter((x) => flaggedSet.has(x.session_id)).length;
-    summaryEl.textContent = `Showing ${filtered.length} of ${sessions.length} · Selected ${selectedCount} · Flagged ! ${flaggedCount}`;
+    summaryEl.textContent = `Showing ${filtered.length} of ${sessions.length} · Selected ${selectedCount} · Flagged ! ${flaggedCount} · Order by ${formatSortSummary(state.groupEditSort)}`;
   }
 
   if (!filtered.length) {
@@ -5984,16 +6404,32 @@ function renderGroupEditSessionsList() {
 }
 
 function wireGroupEditFilters() {
-  const ids = ["#groupEditFilterGender", "#groupEditFilterOccupation", "#groupEditFilterNationality", "#groupEditFilterAgeMin", "#groupEditFilterAgeMax", "#groupEditSearchInput"];
+  const ids = ["#groupEditFilterGender", "#groupEditFilterOccupation", "#groupEditFilterNationality", "#groupEditFilterEducation", "#groupEditFilterDevice", "#groupEditFilterConfidence", "#groupEditFilterPaperMaps", "#groupEditFilterComputerMaps", "#groupEditFilterMobileMaps", "#groupEditFilterTasksMin", "#groupEditFilterTasksMax", "#groupEditFilterEventsMin", "#groupEditFilterEventsMax", "#groupEditFilterDurationMin", "#groupEditFilterDurationMax", "#groupEditFilterAccuracyMin", "#groupEditFilterAccuracyMax", "#groupEditFilterAgeMin", "#groupEditFilterAgeMax", "#groupEditSearchInput"];
   const selectAllBtn = $("#groupEditSelectAllBtn");
   const clearSelectionBtn = $("#groupEditClearSelectionBtn");
   const clearBtn = $("#groupEditClearFiltersBtn");
   const onlyFlaggedBtn = $("#groupEditOnlyFlaggedBtn");
+  const sortKeyEl = $("#groupEditSortKey");
+  const sortDirectionEl = $("#groupEditSortDirection");
 
   const update = () => {
     state.groupEditFilters.gender = $("#groupEditFilterGender")?.value ?? "";
     state.groupEditFilters.occupation = $("#groupEditFilterOccupation")?.value ?? "";
     state.groupEditFilters.nationality = $("#groupEditFilterNationality")?.value ?? "";
+    state.groupEditFilters.education = $("#groupEditFilterEducation")?.value ?? "";
+    state.groupEditFilters.device = $("#groupEditFilterDevice")?.value ?? "";
+    state.groupEditFilters.confidence = $("#groupEditFilterConfidence")?.value ?? "";
+    state.groupEditFilters.paper_maps = $("#groupEditFilterPaperMaps")?.value ?? "";
+    state.groupEditFilters.computer_maps = $("#groupEditFilterComputerMaps")?.value ?? "";
+    state.groupEditFilters.mobile_maps = $("#groupEditFilterMobileMaps")?.value ?? "";
+    state.groupEditFilters.tasksMin = $("#groupEditFilterTasksMin")?.value ?? "";
+    state.groupEditFilters.tasksMax = $("#groupEditFilterTasksMax")?.value ?? "";
+    state.groupEditFilters.eventsMin = $("#groupEditFilterEventsMin")?.value ?? "";
+    state.groupEditFilters.eventsMax = $("#groupEditFilterEventsMax")?.value ?? "";
+    state.groupEditFilters.durationMin = $("#groupEditFilterDurationMin")?.value ?? "";
+    state.groupEditFilters.durationMax = $("#groupEditFilterDurationMax")?.value ?? "";
+    state.groupEditFilters.accuracyMin = $("#groupEditFilterAccuracyMin")?.value ?? "";
+    state.groupEditFilters.accuracyMax = $("#groupEditFilterAccuracyMax")?.value ?? "";
     state.groupEditFilters.ageMin = $("#groupEditFilterAgeMin")?.value ?? "";
     state.groupEditFilters.ageMax = $("#groupEditFilterAgeMax")?.value ?? "";
     state.groupEditFilters.query = $("#groupEditSearchInput")?.value ?? "";
@@ -6001,6 +6437,14 @@ function wireGroupEditFilters() {
   };
 
   ids.forEach((sel) => $(sel)?.addEventListener(sel.includes("Age") || sel.includes("Search") ? "input" : "change", update));
+  sortKeyEl?.addEventListener("change", () => {
+    state.groupEditSort.key = sortKeyEl.value || "default";
+    renderGroupEditSessionsList();
+  });
+  sortDirectionEl?.addEventListener("change", () => {
+    state.groupEditSort.direction = sortDirectionEl.value === "desc" ? "desc" : "asc";
+    renderGroupEditSessionsList();
+  });
   onlyFlaggedBtn?.addEventListener("click", () => {
     state.groupEditShowOnlyFlagged = !state.groupEditShowOnlyFlagged;
     renderGroupEditSessionsList();
@@ -6019,7 +6463,7 @@ function wireGroupEditFilters() {
   });
 
   clearBtn?.addEventListener("click", () => {
-    state.groupEditFilters = { gender: "", ageMin: "", ageMax: "", occupation: "", nationality: "", query: "" };
+    state.groupEditFilters = { gender: "", ageMin: "", ageMax: "", occupation: "", nationality: "", education: "", device: "", confidence: "", paper_maps: "", computer_maps: "", mobile_maps: "", tasksMin: "", tasksMax: "", eventsMin: "", eventsMax: "", durationMin: "", durationMax: "", accuracyMin: "", accuracyMax: "", query: "" };
     state.groupEditShowOnlyFlagged = false;
     renderGroupEditSessionsList();
   });
@@ -6033,7 +6477,7 @@ function openGroupEditModal() {
   state.groupEditFlaggedSessionIds = [];
   state.groupEditSelectedSessionId = (group.session_ids ?? [])[0] ?? null;
   state.groupEditTab = "sessions";
-  state.groupEditFilters = { gender: "", ageMin: "", ageMax: "", occupation: "", nationality: "", query: "" };
+  state.groupEditFilters = { gender: "", ageMin: "", ageMax: "", occupation: "", nationality: "", education: "", device: "", confidence: "", paper_maps: "", computer_maps: "", mobile_maps: "", tasksMin: "", tasksMax: "", eventsMin: "", eventsMax: "", durationMin: "", durationMax: "", accuracyMin: "", accuracyMax: "", query: "" };
   state.groupEditShowOnlyFlagged = false;
 
   const nameInput = $("#groupEditNameInput");
@@ -6672,6 +7116,8 @@ function wireNavButtons() {
   $("#groupEditCreateGroupFromSelectedBtn")?.addEventListener("click", openGroupSplitModal);
   $("#groupEditDeleteFlaggedBtn")?.addEventListener("click", deleteFlaggedFromGroup);
   $("#groupEditExportCsvBtn")?.addEventListener("click", exportCurrentGroupCsv);
+  $("#sessionVisibleFiltersBtn")?.addEventListener("click", () => openVisibleFiltersModal("sessions"));
+  $("#groupEditVisibleFiltersBtn")?.addEventListener("click", () => openVisibleFiltersModal("groupEdit"));
   $("#closeGroupMovementRatiosBtn")?.addEventListener("click", closeGroupMovementRatiosModal);
   $("#closeGroupMovementRatiosBtn2")?.addEventListener("click", closeGroupMovementRatiosModal);
   $("#groupMovementRatiosModalBackdrop")?.addEventListener("click", closeGroupMovementRatiosModal);
@@ -6787,6 +7233,9 @@ function wireModal() {
   $("#closeGroupsCompareBtn")?.addEventListener("click", closeGroupCompareModal);
   $("#closeGroupsCompareBtn2")?.addEventListener("click", closeGroupCompareModal);
   $("#groupsCompareBackdrop")?.addEventListener("click", closeGroupCompareModal);
+  $("#closeVisibleFiltersModalBtn")?.addEventListener("click", closeVisibleFiltersModal);
+  $("#closeVisibleFiltersModalBtn2")?.addEventListener("click", closeVisibleFiltersModal);
+  $("#visibleFiltersModalBackdrop")?.addEventListener("click", closeVisibleFiltersModal);
 
   $("#settingsDeleteConfirmCloseBtn")?.addEventListener("click", closeSettingsDeleteConfirmModal);
   $("#settingsDeleteConfirmCancelBtn")?.addEventListener("click", closeSettingsDeleteConfirmModal);
@@ -6819,8 +7268,11 @@ function wireModal() {
       const modal6 = $("#groupsCompareModal");
       if (modal6 && !modal6.classList.contains("hidden")) closeGroupCompareModal();
 
-      const modal7 = $("#settingsDeleteConfirmModal");
-      if (modal7 && !modal7.classList.contains("hidden")) closeSettingsDeleteConfirmModal();
+      const modal7 = $("#visibleFiltersModal");
+      if (modal7 && !modal7.classList.contains("hidden")) closeVisibleFiltersModal();
+
+      const modal8 = $("#settingsDeleteConfirmModal");
+      if (modal8 && !modal8.classList.contains("hidden")) closeSettingsDeleteConfirmModal();
     }
   });
 }
@@ -6970,19 +7422,49 @@ function wireSessionFilters() {
   const genderEl = $("#sessionFilterGender");
   const occupationEl = $("#sessionFilterOccupation");
   const nationalityEl = $("#sessionFilterNationality");
+  const educationEl = $("#sessionFilterEducation");
+  const deviceEl = $("#sessionFilterDevice");
+  const confidenceEl = $("#sessionFilterConfidence");
+  const paperMapsEl = $("#sessionFilterPaperMaps");
+  const computerMapsEl = $("#sessionFilterComputerMaps");
+  const mobileMapsEl = $("#sessionFilterMobileMaps");
+  const tasksMinEl = $("#sessionFilterTasksMin");
+  const tasksMaxEl = $("#sessionFilterTasksMax");
+  const eventsMinEl = $("#sessionFilterEventsMin");
+  const eventsMaxEl = $("#sessionFilterEventsMax");
+  const durationMinEl = $("#sessionFilterDurationMin");
+  const durationMaxEl = $("#sessionFilterDurationMax");
+  const accuracyMinEl = $("#sessionFilterAccuracyMin");
+  const accuracyMaxEl = $("#sessionFilterAccuracyMax");
   const ageMinEl = $("#sessionFilterAgeMin");
   const ageMaxEl = $("#sessionFilterAgeMax");
   const userIdEl = $("#sessionFilterUserId");
   const clearBtn = $("#clearSessionFiltersBtn");
   const selectAllBtn = $("#selectFilteredSessionsBtn");
   const clearSelectionBtn = $("#clearSessionSelectionBtn");
+  const sortKeyEl = $("#sessionSortKey");
+  const sortDirectionEl = $("#sessionSortDirection");
 
-if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !userIdEl || !clearBtn || !selectAllBtn || !clearSelectionBtn) return;
+if (!genderEl || !occupationEl || !nationalityEl || !educationEl || !deviceEl || !confidenceEl || !paperMapsEl || !computerMapsEl || !mobileMapsEl || !tasksMinEl || !tasksMaxEl || !eventsMinEl || !eventsMaxEl || !durationMinEl || !durationMaxEl || !accuracyMinEl || !accuracyMaxEl || !ageMinEl || !ageMaxEl || !userIdEl || !clearBtn || !selectAllBtn || !clearSelectionBtn) return;
 
   const updateAndRender = () => {
     state.sessionFilters.gender = genderEl.value;
     state.sessionFilters.occupation = occupationEl.value;
     state.sessionFilters.nationality = nationalityEl.value;
+    state.sessionFilters.education = educationEl.value;
+    state.sessionFilters.device = deviceEl.value;
+    state.sessionFilters.confidence = confidenceEl.value;
+    state.sessionFilters.paper_maps = paperMapsEl.value;
+    state.sessionFilters.computer_maps = computerMapsEl.value;
+    state.sessionFilters.mobile_maps = mobileMapsEl.value;
+    state.sessionFilters.tasksMin = tasksMinEl.value;
+    state.sessionFilters.tasksMax = tasksMaxEl.value;
+    state.sessionFilters.eventsMin = eventsMinEl.value;
+    state.sessionFilters.eventsMax = eventsMaxEl.value;
+    state.sessionFilters.durationMin = durationMinEl.value;
+    state.sessionFilters.durationMax = durationMaxEl.value;
+    state.sessionFilters.accuracyMin = accuracyMinEl.value;
+    state.sessionFilters.accuracyMax = accuracyMaxEl.value;
     state.sessionFilters.ageMin = ageMinEl.value;
     state.sessionFilters.ageMax = ageMaxEl.value;
     state.sessionFilters.userIdQuery = userIdEl.value;
@@ -6992,9 +7474,31 @@ if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !u
   genderEl.addEventListener("change", updateAndRender);
   occupationEl.addEventListener("change", updateAndRender);
   nationalityEl.addEventListener("change", updateAndRender);
+  educationEl.addEventListener("change", updateAndRender);
+  deviceEl.addEventListener("change", updateAndRender);
+  confidenceEl.addEventListener("change", updateAndRender);
+  paperMapsEl.addEventListener("change", updateAndRender);
+  computerMapsEl.addEventListener("change", updateAndRender);
+  mobileMapsEl.addEventListener("change", updateAndRender);
+  tasksMinEl.addEventListener("input", updateAndRender);
+  tasksMaxEl.addEventListener("input", updateAndRender);
+  eventsMinEl.addEventListener("input", updateAndRender);
+  eventsMaxEl.addEventListener("input", updateAndRender);
+  durationMinEl.addEventListener("input", updateAndRender);
+  durationMaxEl.addEventListener("input", updateAndRender);
+  accuracyMinEl.addEventListener("input", updateAndRender);
+  accuracyMaxEl.addEventListener("input", updateAndRender);
   ageMinEl.addEventListener("input", updateAndRender);
   ageMaxEl.addEventListener("input", updateAndRender);
   userIdEl.addEventListener("input", updateAndRender);
+  sortKeyEl?.addEventListener("change", () => {
+    state.sessionSort.key = sortKeyEl.value || "default";
+    renderSessionsList();
+  });
+  sortDirectionEl?.addEventListener("change", () => {
+    state.sessionSort.direction = sortDirectionEl.value === "desc" ? "desc" : "asc";
+    renderSessionsList();
+  });
 
   selectAllBtn.addEventListener("click", () => {
     const sessions = getSessionsForSelectedTest();
@@ -7021,6 +7525,20 @@ if (!genderEl || !occupationEl || !nationalityEl || !ageMinEl || !ageMaxEl || !u
       ageMax: "",
       occupation: "",
       nationality: "",
+      education: "",
+      device: "",
+      confidence: "",
+      paper_maps: "",
+      computer_maps: "",
+      mobile_maps: "",
+      tasksMin: "",
+      tasksMax: "",
+      eventsMin: "",
+      eventsMax: "",
+      durationMin: "",
+      durationMax: "",
+      accuracyMin: "",
+      accuracyMax: "",
       userIdQuery: "",
     };
     renderSessionsList();
@@ -7098,6 +7616,8 @@ async function init() {
 
   state.tests = loadTestsFromStorage();
   state.selectedTestId = loadSelectedTestFromStorage(state.tests);
+  state.visibleSessionFilters = loadVisibleFilters(SESSION_VISIBLE_FILTERS_KEY, DEFAULT_VISIBLE_SESSION_FILTERS);
+  state.visibleGroupEditFilters = loadVisibleFilters(GROUP_EDIT_VISIBLE_FILTERS_KEY, DEFAULT_VISIBLE_GROUP_EDIT_FILTERS);
 
   try {
     await loadTestsCatalogFromBackend();
