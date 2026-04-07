@@ -3559,58 +3559,41 @@ function renderTimelineModalContent(eventsPayload) {
 
   const legendHtml = buildLegendHtml(usedNames);
 
-  // Slider ticks (text labels)
-  const tick25 = fmtSec(totalSec * 0.25);
-  const tick50 = fmtSec(totalSec * 0.50);
-  const tick75 = fmtSec(totalSec * 0.75);
-  const tick100 = fmtSec(totalSec);
-
   container.innerHTML = `
     <div style="
       border-radius:12px;
       background:rgba(255,255,255,0.04);
       border:1px solid rgba(255,255,255,0.08);
       padding:10px;
-      position:relative;
     " id="timelineWrap">
 
-      <!-- marker spanning bar + legend area -->
-      <div id="timelineMarker" style="
-        position:absolute;
-        top:10px;
-        bottom:10px;
-        width:2px;
-        background:rgba(255,255,255,0.65);
-        left:0%;
-        pointer-events:none;
-        transform:translateX(-1px);
-      "></div>
+      <div id="timelineInteractive" style="position:relative;">
+        <!-- marker spanning only timeline axis + interactive slider -->
+        <div id="timelineMarker" style="
+          position:absolute;
+          top:0;
+          bottom:0;
+          width:2px;
+          background:rgba(255,255,255,0.65);
+          left:0%;
+          pointer-events:none;
+          transform:translateX(-1px);
+        "></div>
 
-      <!-- BAR -->
-      <div style="
-        position:relative;
-        height:${barHeightPx}px;
-        overflow:hidden;
-        background:rgba(255,255,255,0.06);
-        border:1px solid rgba(255,255,255,0.08);
-        border-radius:0;       /* remove rounded corners */
-      " id="timelineBar">
-        ${segmentsHtml}
-      </div>
-
-      <!-- X axis ticks -->
-      <div class="row" style="justify-content:space-between; margin-top:10px;">
-        <div class="muted small">0 s</div>
-        <div class="muted small">${escapeHtml(tick25)}</div>
-        <div class="muted small">${escapeHtml(tick50)}</div>
-        <div class="muted small">${escapeHtml(tick75)}</div>
-        <div class="muted small">${escapeHtml(tick100)}</div>
-      </div>
+        <!-- BAR -->
+        <div style="
+          position:relative;
+          height:${barHeightPx}px;
+          overflow:hidden;
+          background:rgba(255,255,255,0.06);
+          border:1px solid rgba(255,255,255,0.08);
+          border-radius:0;       /* remove rounded corners */
+        " id="timelineBar">
+          ${segmentsHtml}
+        </div>
 
       <!-- Slider + readout -->
-      <div style="margin-top:12px;">
-        <div class="row" style="align-items:center; gap:12px;">
-          <div class="muted small" style="min-width:80px;">Time</div>
+        <div style="margin-top:12px;">
           <input
             id="timelineSlider"
             type="range"
@@ -3618,13 +3601,12 @@ function renderTimelineModalContent(eventsPayload) {
             max="${Math.round(totalMs)}"
             value="0"
             step="10"
-            style="flex:1;"
+            style="width:100%; margin:0;"
           />
-          <div class="muted small" id="timelineSliderTime" style="min-width:120px; text-align:right;">
-            0.0 s
-          </div>
         </div>
+      </div>
 
+      <div style="margin-top:10px;">
         <div id="timelineReadout" style="margin-top:10px;">
           <div class="metric-grid">
             <div class="metric">
@@ -3659,30 +3641,30 @@ function renderTimelineModalContent(eventsPayload) {
   // Slider wiring
   const slider = $("#timelineSlider");
   const marker = $("#timelineMarker");
-  const timeEl = $("#timelineSliderTime");
   const readout = $("#timelineReadout");
 
   function updateFromTime(tMs) {
-    const wrap = $("#timelineWrap");
+    const interactive = $("#timelineInteractive");
     const bar = $("#timelineBar");
 
-    if (marker && wrap && bar) {
-      const wrapRect = wrap.getBoundingClientRect();
-      const barRect = bar.getBoundingClientRect();
+    if (marker && interactive && bar) {
+      const wrapRect = interactive.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, tMs / totalMs));
 
-      // x pozice uvnitř baru (px)
-      const xInBar = (tMs / totalMs) * barRect.width;
-
-      // marker chceme umístit tak, aby seděl na bar (a tím i na segmenty),
-      // ale zároveň spanoval celý wrap (osa + slider + legenda)
-      const leftPx = (barRect.left - wrapRect.left) + xInBar;
+      let leftPx = 0;
+      if (slider) {
+        const sliderRect = slider.getBoundingClientRect();
+        leftPx = (sliderRect.left - wrapRect.left) + (ratio * sliderRect.width);
+      } else {
+        const barRect = bar.getBoundingClientRect();
+        leftPx = (barRect.left - wrapRect.left) + (ratio * barRect.width);
+      }
 
       marker.style.left = `${leftPx}px`;
     }
 
 
     const sec = tMs / 1000;
-    if (timeEl) timeEl.textContent = fmtSec(sec);
 
     const it = findItemAtTime(items, tMs);
 
@@ -3833,6 +3815,72 @@ function openGazeplotterExportConfirmModal(message) {
   });
 }
 
+function openTestExportChooserModal() {
+  const modal = $("#testExportChooserModal");
+  const closeBtn = $("#testExportChooserCloseBtn");
+  const backBtn = $("#testExportChooserBackBtn");
+  const backdrop = $("#testExportChooserBackdrop");
+  const spatialBtn = $("#testExportChooserSpatialBtn");
+  const gazeplotterBtn = $("#testExportChooserGazeplotterBtn");
+  if (!modal || !closeBtn || !backBtn || !backdrop || !spatialBtn || !gazeplotterBtn) {
+    return;
+  }
+
+  const closeModal = () => {
+    hide(modal);
+  };
+
+  const runSpatialExport = async () => {
+    closeModal();
+    await exportSpatialForCurrentTestSessions({ skipConfirm: true });
+  };
+
+  const runGazeplotterExport = async () => {
+    closeModal();
+    await exportGazeplotterForCurrentTestSessions({ skipConfirm: true });
+  };
+
+  closeBtn.onclick = closeModal;
+  backBtn.onclick = closeModal;
+  backdrop.onclick = closeModal;
+  spatialBtn.onclick = runSpatialExport;
+  gazeplotterBtn.onclick = runGazeplotterExport;
+  show(modal);
+}
+
+function openGroupExportChooserModal() {
+  const modal = $("#groupExportChooserModal");
+  const closeBtn = $("#groupExportChooserCloseBtn");
+  const backBtn = $("#groupExportChooserBackBtn");
+  const backdrop = $("#groupExportChooserBackdrop");
+  const spatialBtn = $("#groupExportChooserSpatialBtn");
+  const gazeplotterBtn = $("#groupExportChooserGazeplotterBtn");
+  if (!modal || !closeBtn || !backBtn || !backdrop || !spatialBtn || !gazeplotterBtn) {
+    return;
+  }
+
+  const closeModal = () => {
+    hide(modal);
+  };
+
+  const runSpatialExport = async () => {
+    closeModal();
+    await exportSpatialForCurrentGroupSessions({ skipConfirm: true });
+  };
+
+  const runGazeplotterExport = async () => {
+    closeModal();
+    await exportGazeplotterForCurrentGroupSessions({ skipConfirm: true });
+  };
+
+  closeBtn.onclick = closeModal;
+  backBtn.onclick = closeModal;
+  backdrop.onclick = closeModal;
+  spatialBtn.onclick = runSpatialExport;
+  gazeplotterBtn.onclick = runGazeplotterExport;
+  show(modal);
+}
+
 async function exportTimelineCsvForSelectedSession() {
   const s = state.selectedSession;
   if (!s?.session_id) return;
@@ -3862,14 +3910,16 @@ async function exportTimelineCsvForSelectedSession() {
   }
 }
 
-async function exportGazeplotterForCurrentTestSessions() {
+async function exportGazeplotterForCurrentTestSessions(options = {}) {
   const testId = state.selectedTestId ?? "TEST";
-  const confirmed = await openGazeplotterExportConfirmModal(
-    "You are about to export a GazePlotter CSV for all sessions in the user experiment. For large files, this may take a while."
-  );
-  if (!confirmed) return;
+  if (!options.skipConfirm) {
+    const confirmed = await openGazeplotterExportConfirmModal(
+      "You are about to export a GazePlotter CSV for all sessions in the user experiment. For large files, this may take a while."
+    );
+    if (!confirmed) return;
+  }
 
-  const btn = $("#exportTestGazeplotterCsvBtn");
+  const btn = $("#openTestExportModalBtn");
   const originalLabel = btn?.textContent;
   if (btn) {
     btn.disabled = true;
@@ -3891,19 +3941,21 @@ async function exportGazeplotterForCurrentTestSessions() {
   }
 }
 
-async function exportGazeplotterForCurrentGroupSessions() {
+async function exportGazeplotterForCurrentGroupSessions(options = {}) {
   const group = getSelectedGroup();
   if (!group?.id) {
     showAppMessage({ type: "error", text: "Please select a group first." });
     return;
   }
 
-  const confirmed = await openGazeplotterExportConfirmModal(
-    "You are about to export a GazePlotter CSV for all sessions in the group. For large files, this may take a while."
-  );
-  if (!confirmed) return;
+  if (!options.skipConfirm) {
+    const confirmed = await openGazeplotterExportConfirmModal(
+      "You are about to export a GazePlotter CSV for all sessions in the group. For large files, this may take a while."
+    );
+    if (!confirmed) return;
+  }
 
-  const btn = $("#exportGroupGazeplotterCsvBtn");
+  const btn = $("#openGroupExportModalBtn");
   const originalLabel = btn?.textContent;
   if (btn) {
     btn.disabled = true;
@@ -3925,14 +3977,16 @@ async function exportGazeplotterForCurrentGroupSessions() {
   }
 }
 
-async function exportSpatialForCurrentTestSessions() {
+async function exportSpatialForCurrentTestSessions(options = {}) {
   const testId = state.selectedTestId ?? "TEST";
-  const confirmed = await openGazeplotterExportConfirmModal(
-    "You are about to export spatial data for all sessions in the user experiment. For large files, this may take a while."
-  );
-  if (!confirmed) return;
+  if (!options.skipConfirm) {
+    const confirmed = await openGazeplotterExportConfirmModal(
+      "You are about to export spatial data for all sessions in the user experiment. For large files, this may take a while."
+    );
+    if (!confirmed) return;
+  }
 
-  const btn = $("#exportTestSpatialDataBtn");
+  const btn = $("#openTestExportModalBtn");
   const originalLabel = btn?.textContent;
   if (btn) {
     btn.disabled = true;
@@ -3954,19 +4008,21 @@ async function exportSpatialForCurrentTestSessions() {
   }
 }
 
-async function exportSpatialForCurrentGroupSessions() {
+async function exportSpatialForCurrentGroupSessions(options = {}) {
   const group = getSelectedGroup();
   if (!group?.id) {
     showAppMessage({ type: "error", text: "Please select a group first." });
     return;
   }
 
-  const confirmed = await openGazeplotterExportConfirmModal(
-    "You are about to export spatial data for all sessions in the group. For large files, this may take a while."
-  );
-  if (!confirmed) return;
+  if (!options.skipConfirm) {
+    const confirmed = await openGazeplotterExportConfirmModal(
+      "You are about to export spatial data for all sessions in the group. For large files, this may take a while."
+    );
+    if (!confirmed) return;
+  }
 
-  const btn = $("#exportGroupSpatialDataBtn");
+  const btn = $("#openGroupExportModalBtn");
   const originalLabel = btn?.textContent;
   if (btn) {
     btn.disabled = true;
@@ -5840,12 +5896,12 @@ function renderGroupCompareAnswersTab(groups) {
 
   const options = allTasks.map((taskId) => `<option value="${escapeHtml(taskId)}" ${taskId===state.selectedGroupCompareTaskId?"selected":""}>${escapeHtml(taskId)}</option>`).join("");
   wrap.innerHTML = `
-    <div class="row" style="justify-content:space-between; align-items:end; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
-      <div class="muted small">Answers by group for the same task.</div>
+    <div class="row" style="justify-content:flex-start; align-items:end; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
       <label class="filter-field" style="max-width:320px; margin:0;">
         <span>Task</span>
         <select id="groupsCompareWordcloudTaskSelect">${options}</select>
       </label>
+      <div class="muted small">Answers by group for the same task.</div>
     </div>
     <div class="wordcloud-grid" id="groupsCompareWordcloudGrid"><div class="muted small">Loading…</div></div>
   `;
@@ -5917,8 +5973,7 @@ function renderGroupsPage() {
   const socioPanelEl = $("#groupSocioPanel");
   const searchQuery = normalizeSearchText(state.groupsSearchQuery);
   const compareBtn = $("#openGroupsCompareBtn");
-  const exportGroupBtn = $("#exportGroupGazeplotterCsvBtn");
-  const exportGroupSpatialBtn = $("#exportGroupSpatialDataBtn");
+  const exportGroupBtn = $("#openGroupExportModalBtn");
   if (!groupsListEl || !usersPanelEl || !groupMovementBtn) return;
 
   const filteredGroups = state.groups.filter((g) => normalizeSearchText(g.name).includes(searchQuery));
@@ -5938,8 +5993,7 @@ function renderGroupsPage() {
     socioPanelEl?.classList.add("hidden");
     if (editBtn) editBtn.disabled = true;
     if (compareBtn) compareBtn.disabled = true;
-     if (exportGroupBtn) exportGroupBtn.disabled = true;
-     if (exportGroupSpatialBtn) exportGroupSpatialBtn.disabled = true;
+    if (exportGroupBtn) exportGroupBtn.disabled = true;
     return;
   }
 
@@ -6009,7 +6063,6 @@ function renderGroupsPage() {
     if (editBtn) editBtn.disabled = true;
     if (compareBtn) compareBtn.disabled = (state.selectedGroupCompareIds ?? []).length < 1;
     if (exportGroupBtn) exportGroupBtn.disabled = true;
-    if (exportGroupSpatialBtn) exportGroupSpatialBtn.disabled = true;
     return;
   }
 
@@ -6025,7 +6078,6 @@ function renderGroupsPage() {
 
   if (editBtn) editBtn.disabled = false;
   if (exportGroupBtn) exportGroupBtn.disabled = false;
-  if (exportGroupSpatialBtn) exportGroupSpatialBtn.disabled = false;
   if (!$("#groupMovementRatiosModal")?.classList.contains("hidden")) {
     renderGroupMovementRatiosModal();
   }
@@ -6963,8 +7015,9 @@ function wireNavButtons() {
     await navigateToRoute({ name: ROUTE_NAMES.DASHBOARD });
   });
 
-  $("#exportTestGazeplotterCsvBtn")?.addEventListener("click", exportGazeplotterForCurrentTestSessions);
-  $("#exportTestSpatialDataBtn")?.addEventListener("click", exportSpatialForCurrentTestSessions);
+  $("#openTestExportModalBtn")?.addEventListener("click", () => {
+    openTestExportChooserModal();
+  });
 
   $("#openSessionBtn")?.addEventListener("click", async () => {
     if (!state.selectedSession) return;
@@ -7010,8 +7063,9 @@ function wireNavButtons() {
     });
   });
 
-  $("#exportGroupGazeplotterCsvBtn")?.addEventListener("click", exportGazeplotterForCurrentGroupSessions);
-  $("#exportGroupSpatialDataBtn")?.addEventListener("click", exportSpatialForCurrentGroupSessions);
+  $("#openGroupExportModalBtn")?.addEventListener("click", () => {
+    openGroupExportChooserModal();
+  });
   
   $("#openGroupsCompareBtn")?.addEventListener("click", () => {
     openGroupCompareModal();
