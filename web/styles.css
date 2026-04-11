@@ -383,6 +383,11 @@ p {
   width: 100%;
 }
 
+.filter-field-wide {
+  width: 100%;
+  max-width: none;
+}
+
 .text-area-input {
   border: 1px solid rgba(34, 48, 74, .85);
   border-radius: 10px;
@@ -479,6 +484,18 @@ p {
   overflow: hidden;
 }
 
+.list-item-split.with-action {
+  grid-template-columns: 44px minmax(0, 1fr) 52px;
+}
+
+.list-item-split.no-checkbox {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.list-item-split.no-checkbox.with-action {
+  grid-template-columns: minmax(0, 1fr) 52px;
+}
+
 .list-item-split.is-active-row {
   border-color: rgba(106, 166, 255, .85);
   box-shadow: 0 0 0 4px rgba(106, 166, 255, .18);
@@ -533,6 +550,60 @@ p {
 
 .list-item-main.is-selected .title {
   font-weight: 800;
+}
+
+.list-item-header {
+  padding: 0;
+  cursor: default;
+  background: rgba(12, 18, 32, .55);
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+
+.list-item-header:hover {
+  border-color: rgba(34, 48, 74, .85);
+}
+
+.list-item-header .list-item-main {
+  cursor: default;
+  min-height: 36px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.list-item-header .list-item-main:hover {
+  background: transparent;
+}
+
+.list-item-action-col {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+}
+
+.list-item-action-col {
+  border-left: 1px solid rgba(106, 166, 255, .16);
+}
+
+.list-item-header .list-item-action-col {
+  min-height: 36px;
+}
+
+.list-item-inline-meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.list-item-header .title {
+  font-size: 13px;
+}
+
+.list-item-header .list-item-inline-meta {
+  font-size: 10px;
 }
 
 .row {
@@ -1048,9 +1119,9 @@ p {
 }
 
 #groupCompareBoxplotLegend .compare-chart-legend-item {
-  border-color: rgba(106, 166, 255, .45);
-  background: rgba(11, 20, 38, .72);
-  color: #f3f7ff;
+  border-color: rgba(148, 163, 184, .85);
+  background: #f8fafc;
+  color: #0f172a;
   font-weight: 700;
 }
 
@@ -1061,6 +1132,12 @@ p {
   overflow: hidden;
   background: #ffffff;
   margin-bottom: 8px;
+}
+
+.compare-chart-canvas-wrap--answer {
+  width: 75%;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .compare-chart-svg {
@@ -1138,6 +1215,10 @@ p {
     width: 100%;
     justify-content: space-between;
   }
+
+  .compare-chart-canvas-wrap--answer {
+    width: 100%;
+  }
 }
 
 .group-boxplot-grid {
@@ -1164,12 +1245,12 @@ p {
   flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 10px;
-  color: #e6eeff;
+  color: #0f172a;
   font-size: 12px;
   padding: 10px 12px;
-  border: 1px solid rgba(106, 166, 255, .42);
+  border: 1px solid rgba(148, 163, 184, .85);
   border-radius: 12px;
-  background: rgba(11, 20, 38, .6);
+  background: #f8fafc;
 }
 
 .boxplot-meaning-legend span {
@@ -1327,6 +1408,34 @@ p {
 
 .leaflet-map-canvas .leaflet-control-container .leaflet-control {
   box-shadow: 0 2px 12px rgba(0, 0, 0, .28);
+}
+
+.timeline-axis {
+  position: relative;
+  height: 28px;
+  margin-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, .22);
+}
+
+.timeline-axis-stop {
+  position: absolute;
+  top: -1px;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+}
+
+.timeline-axis-tick {
+  width: 1px;
+  height: 8px;
+  background: rgba(255, 255, 255, .5);
+}
+
+.timeline-axis-label {
+  color: rgba(218, 226, 244, .88);
+  font-size: 11px;
+  line-height: 1;
 }
 
 @media (max-width: 980px) {
@@ -1865,6 +1974,12 @@ p {
   background: rgba(255, 107, 107, .36) !important;
   box-shadow: 0 0 0 3px rgba(255, 107, 107, .22) !important;
 }
+
+#groupEditSessionsList .group-edit-flag.is-partial {
+  border-color: rgba(255, 107, 107, .7);
+  background: rgba(255, 107, 107, .16);
+}
+
 .app-footer {
   margin-top: 10px;
   padding: 30px 16px 30px;

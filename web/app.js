@@ -48,6 +48,16 @@ function fmtSec(sec) {
   return `${m}:${String(rs).padStart(2, "0")}`;
 }
 
+function fmtTimelineAxisTime(ms) {
+  const safeMs = Number.isFinite(Number(ms)) ? Math.max(0, Number(ms)) : 0;
+  const totalSeconds = Math.floor(safeMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function safeNum(x) {
   const n = Number(x);
   return Number.isFinite(n) ? n : null;
@@ -208,10 +218,8 @@ const SESSION_FILTER_VISIBILITY_OPTIONS = [
   { key: "durationMax", label: "Max. duration (s)" },
   { key: "accuracyMin", label: "Min. accuracy (%)" },
   { key: "accuracyMax", label: "Max. accuracy (%)" },
-  { key: "userIdQuery", label: "Search User ID" },
 ];
 const GROUP_EDIT_FILTER_VISIBILITY_OPTIONS = [
-  { key: "query", label: "Search user/session" },
   { key: "gender", label: "Gender" },
   { key: "ageMin", label: "Min. Age" },
   { key: "ageMax", label: "Max. Age" },
@@ -233,8 +241,8 @@ const GROUP_EDIT_FILTER_VISIBILITY_OPTIONS = [
   { key: "accuracyMax", label: "Max. accuracy (%)" },
 ];
 
-const DEFAULT_VISIBLE_SESSION_FILTERS = ["userIdQuery", "gender", "ageMin", "ageMax"];
-const DEFAULT_VISIBLE_GROUP_EDIT_FILTERS = ["query", "gender", "ageMin", "ageMax"];
+const DEFAULT_VISIBLE_SESSION_FILTERS = ["gender", "ageMin", "ageMax"];
+const DEFAULT_VISIBLE_GROUP_EDIT_FILTERS = ["gender", "ageMin", "ageMax"];
 
 const TESTS_STORAGE_KEY = "maptrack_tests";
 const SELECTED_TEST_STORAGE_KEY = "maptrack_selected_test";
@@ -253,11 +261,13 @@ const state = {
   intervalRatiosSelection: {
     taskKey: "ALL_TASKS",
     visibleEventKeys: INTERVAL_EVENT_OPTIONS.map((option) => option.key),
+    showOther: true,
   },
   groupMovementRatiosSelection: {
     taskKey: "ALL_TASKS",
     statistic: "average",
     visibleEventKeys: INTERVAL_EVENT_OPTIONS.map((option) => option.key),
+    showOther: true,
   },
   selectedSessionIds: [],
   sessions: [],
@@ -277,6 +287,7 @@ const state = {
     taskKey: "ALL_TASKS",
     statistic: "average",
     visibleEventKeys: INTERVAL_EVENT_OPTIONS.map((option) => option.key),
+    showOther: true,
   },
   groupTaskSearchQuery: "",
   selectedGroupCompareTaskId: null,
@@ -1527,6 +1538,87 @@ function formatSortSummary(sortConfig) {
   return `${opt.label} (${dir})`;
 }
 
+function formatSessionOrderByValue(session, sortConfig = {}) {
+  const key = sortConfig?.key ?? "default";
+  if (key === "default") return "";
+  const option = SESSION_SORT_OPTIONS.find((x) => x.key === key) ?? SESSION_SORT_OPTIONS[0];
+  const rawValue = getSessionSortValue(session, key);
+  if (rawValue === null || rawValue === undefined || rawValue === "") return "—";
+  if (option.mode === "numeric") {
+    const value = Number(rawValue);
+    if (!Number.isFinite(value)) return "—";
+    if (key === "accuracy") return fmtPercent(value);
+    if (key === "duration_ms") return fmtMs(value);
+    return String(value);
+  }
+  return String(rawValue);
+}
+
+function renderSessionListRow({
+  session,
+  rowId,
+  checkboxRole,
+  checkboxDataKey = "session",
+  isChecked = false,
+  isActive = false,
+  sortConfig = {},
+  actionButtonHtml = "",
+  actionColClass = "",
+  showCheckbox = true,
+}) {
+  const activeClass = isActive ? "is-selected" : "";
+  const activeRowClass = isActive ? "is-active-row" : "";
+  const checkedClass = isChecked ? "is-checked" : "";
+  const checkedAttr = isChecked ? "checked" : "";
+  const safeDataKey = escapeHtml(checkboxDataKey);
+  const safeItemId = escapeHtml(rowId);
+  const orderByValue = formatSessionOrderByValue(session, sortConfig);
+  const showOrderValue = sortConfig?.key && sortConfig.key !== "default";
+  const hasActionColumn = !!actionButtonHtml;
+  const layoutClass = [
+    hasActionColumn ? "with-action" : "",
+    showCheckbox ? "" : "no-checkbox",
+  ].filter(Boolean).join(" ");
+
+  return `
+    <div class="list-item list-item-split ${layoutClass} ${checkedClass} ${activeRowClass}">
+      ${showCheckbox ? `<div class="list-item-checkbox-col" aria-label="Selection checkbox column">
+        <input type="checkbox" data-role="${escapeHtml(checkboxRole)}" data-${safeDataKey}="${safeItemId}" ${checkedAttr} />
+      </div>` : ""}
+      <button class="list-item-main ${activeClass}" type="button" data-role="list-main" data-${safeDataKey}="${safeItemId}">
+        <div class="title">${escapeHtml(session?.user_id ?? "—")}</div>
+        ${showOrderValue ? `<span class="list-item-inline-meta">${escapeHtml(orderByValue)}</span>` : ""}
+      </button>
+      ${hasActionColumn ? `<div class="list-item-action-col ${escapeHtml(actionColClass)}">${actionButtonHtml}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderSessionListHeader({
+  checkboxRole,
+  orderLabel = "Order by value",
+  actionHeaderHtml = "",
+  showCheckbox = true,
+}) {
+  const hasActionColumn = !!actionHeaderHtml;
+  const layoutClass = [
+    hasActionColumn ? "with-action" : "",
+    showCheckbox ? "" : "no-checkbox",
+  ].filter(Boolean).join(" ");
+  return `
+    <div class="list-item list-item-split list-item-header ${layoutClass}">
+      ${showCheckbox ? `<div class="list-item-checkbox-col">
+        <input type="checkbox" data-role="${escapeHtml(checkboxRole)}" />
+      </div>` : ""}
+      <div class="list-item-main">
+        <div class="title">User / Session ID</div>
+        <span class="list-item-inline-meta">${escapeHtml(orderLabel)}</span>
+      </div>
+      ${hasActionColumn ? `<div class="list-item-action-col">${actionHeaderHtml}</div>` : ""}
+    </div>
+  `;
+}
+
 function renderSeparatedSelectionRow({
   itemId,
   title,
@@ -1592,20 +1684,24 @@ function renderSessionsList() {
     return;
   }
 
-  listEl.innerHTML = filteredSessions.map((s) => {
+  listEl.innerHTML = `
+    ${renderSessionListHeader({ checkboxRole: "sessions-master-checkbox" })}
+    ${filteredSessions.map((s) => {
     const isActive = s.session_id === state.selectedSessionId;
     const isChecked = (state.selectedSessionIds ?? []).includes(s.session_id);
-    return renderSeparatedSelectionRow({
-      itemId: s.session_id,
-      title: s.user_id ?? "—",
+    return renderSessionListRow({
+      session: s,
+      rowId: s.session_id,
       checkboxRole: "group-select",
       checkboxDataKey: "session",
       isChecked,
       isActive,
+      sortConfig: state.sessionSort,
     });
-  }).join("");
+  }).join("")}
+  `;
 
-  $$("#sessionsList .list-item-main").forEach(item => {
+  $$("#sessionsList [data-role='list-main']").forEach(item => {
     item.addEventListener("click", () => {
       const id = item.dataset.session;
       selectSession(id);
@@ -1640,6 +1736,23 @@ function renderSessionsList() {
       renderSessionsList();
     });
   });
+
+  const masterCheckbox = $("#sessionsList input[data-role='sessions-master-checkbox']");
+  if (masterCheckbox) {
+    const displayedIds = filteredSessions.map((s) => s.session_id);
+    const selectedSet = new Set(state.selectedSessionIds ?? []);
+    const selectedDisplayed = displayedIds.filter((id) => selectedSet.has(id)).length;
+    masterCheckbox.checked = displayedIds.length > 0 && selectedDisplayed === displayedIds.length;
+    masterCheckbox.indeterminate = selectedDisplayed > 0 && selectedDisplayed < displayedIds.length;
+    masterCheckbox.addEventListener("change", () => {
+      const next = new Set(state.selectedSessionIds ?? []);
+      if (masterCheckbox.checked) displayedIds.forEach((id) => next.add(id));
+      else displayedIds.forEach((id) => next.delete(id));
+      state.selectedSessionIds = Array.from(next);
+      persistGroupDraftSelection();
+      renderSessionsList();
+    });
+  }
 }
 
 function renderSessionMetricsPicker() {
@@ -2461,7 +2574,13 @@ function renderIntervalRatiosModal() {
       <span class="interval-ratios-dot" style="background:${option.color};"></span>
       <span>${escapeHtml(option.label)}</span>
     </label>
-  `).join("");
+  `).join("") + `
+    <label class="interval-ratios-toggle">
+      <input type="checkbox" data-role="interval-ratio-other-toggle" ${state.intervalRatiosSelection.showOther ? "checked" : ""} />
+      <span class="interval-ratios-dot" style="background:${INTERVAL_OTHER_OPTION.color};"></span>
+      <span>Show Other</span>
+    </label>
+  `;
 
   const scopePayload = getSelectedIntervalRatioScopePayload();
   if (!session || !payload || !scopePayload) {
@@ -2503,7 +2622,7 @@ function renderIntervalRatiosModal() {
           </div>
         `;
       }),
-      `
+      state.intervalRatiosSelection.showOther ? `
         <div class="interval-ratios-row">
           <div class="interval-ratios-label">
             <span class="interval-ratios-dot" style="background:${INTERVAL_OTHER_OPTION.color};"></span>
@@ -2515,7 +2634,7 @@ function renderIntervalRatiosModal() {
           </div>
           <div class="interval-ratios-value">${fmtMs(otherDurationMs)}</div>
         </div>
-      `,
+      ` : "",
     ].join("");
 
     const dominantBehaviorColor = (INTERVAL_EVENT_OPTIONS.find((option) => option.key === dominantBehavior?.event_key) ?? INTERVAL_OTHER_OPTION).color;
@@ -2545,7 +2664,7 @@ function renderIntervalRatiosModal() {
         <div class="interval-ratios-chart-card">
           <div class="interval-ratios-chart">${chartRows}</div>
         </div>
-        <div class="interval-ratios-footnote">Right column shows summed duration. “Other” is the remaining task time that is not currently displayed in Move / Zoom / Popup, so the chart always sums to 100%.</div>
+        <div class="interval-ratios-footnote">Right column shows summed duration. “Other” is the remaining task time that is not currently displayed in Move / Zoom / Popup, so the chart always sums to 100% even when hidden.</div>
       </div>
     `;
   }
@@ -2562,12 +2681,17 @@ function renderIntervalRatiosModal() {
       renderIntervalRatiosModal();
     });
   });
+  $(`#intervalRatiosEventToggles [data-role='interval-ratio-other-toggle']`)?.addEventListener("change", (e) => {
+    state.intervalRatiosSelection.showOther = Boolean(e.target?.checked);
+    renderIntervalRatiosModal();
+  });
 }
 
 function renderGroupIntervalRatiosPanel({
   aggregate,
   scopeLabel,
   visibleEventKeys,
+  showOther = true,
   emptyMessage = "No interval ratios available for the selected scope.",
 }) {
   if (!aggregate) {
@@ -2599,7 +2723,7 @@ function renderGroupIntervalRatiosPanel({
         </div>
       `;
     }),
-    `
+    showOther ? `
       <div class="interval-ratios-row">
         <div class="interval-ratios-label">
           <span class="interval-ratios-dot" style="background:${INTERVAL_OTHER_OPTION.color};"></span>
@@ -2611,7 +2735,7 @@ function renderGroupIntervalRatiosPanel({
         </div>
         <div class="interval-ratios-value">${fmtMs(aggregate.events?.[INTERVAL_OTHER_OPTION.key]?.duration_ms ?? 0)}</div>
       </div>
-    `,
+     ` : "",
   ].join("");
 
   const dominantBehavior = aggregate.dominant_behavior ?? null;
@@ -2691,7 +2815,13 @@ function renderGroupMovementRatiosModal() {
       <span class="interval-ratios-dot" style="background:${option.color};"></span>
       <span>${escapeHtml(option.label)}</span>
     </label>
-  `).join("");
+  `).join("") + `
+    <label class="interval-ratios-toggle">
+      <input type="checkbox" data-role="group-interval-ratio-other-toggle" ${state.groupMovementRatiosSelection.showOther ? "checked" : ""} />
+      <span class="interval-ratios-dot" style="background:${INTERVAL_OTHER_OPTION.color};"></span>
+      <span>Show Other</span>
+    </label>
+  `;
 
   if (!group || !sessions.length) {
     contentEl.innerHTML = `
@@ -2713,6 +2843,7 @@ function renderGroupMovementRatiosModal() {
       aggregate,
       scopeLabel,
       visibleEventKeys: selectedVisible,
+      showOther: state.groupMovementRatiosSelection.showOther,
       emptyMessage: "This group does not contain sessions with computed task durations and interval events for the selected scope.",
     });
   }
@@ -2733,6 +2864,10 @@ function renderGroupMovementRatiosModal() {
         .map((checkbox) => checkbox.value);
       renderGroupMovementRatiosModal();
     });
+  });
+  $(`#groupMovementRatiosEventToggles [data-role='group-interval-ratio-other-toggle']`)?.addEventListener("change", (e) => {
+    state.groupMovementRatiosSelection.showOther = Boolean(e.target?.checked);
+    renderGroupMovementRatiosModal();
   });
 }
 
@@ -2886,6 +3021,7 @@ function getTaskMapControlsState() {
     showAllViewportRects: $("#taskMapShowAllViewportRects")?.checked ?? false,
     pointsColor: $("#taskMapPointsColorInput")?.value ?? "#4cc9f0",
     lineColor: $("#taskMapLineColorInput")?.value ?? "#f72585",
+    endpointColor: $("#taskMapEndpointColorInput")?.value ?? "#ff9f1c",
   };
 }
 
@@ -2904,7 +3040,8 @@ function syncTaskMapLegend() {
     lineSwatch.style.opacity = controls.showTrajectory ? "1" : ".35";
   }
   if (endpointSwatch) endpointSwatch.style.opacity = controls.showEndpoints ? "1" : ".35";
-  if (viewportSwatch) viewportSwatch.style.opacity = controls.showViewportRects ? "1" : ".35";
+  if (endpointSwatch) endpointSwatch.style.background = controls.endpointColor;
+  if (viewportSwatch) viewportSwatch.style.opacity = (controls.showViewportRects && state.taskMap.viewportRectangles.length > 0) ? "1" : ".35";
 }
 
 function applyTaskMapLayerStyles() {
@@ -2930,7 +3067,7 @@ function applyTaskMapLayerStyles() {
     trajectoryPointsLayer.setStyle({ color: controls.lineColor, fillColor: controls.lineColor, fillOpacity: 0.8, radius: 5, weight: 1 });
   }
   if (endpointLayer?.setStyle) {
-    endpointLayer.setStyle({ color: "#ff9f1c", fillColor: "#ff9f1c", fillOpacity: 0.95, radius: 8, weight: 2 });
+    endpointLayer.setStyle({ color: controls.endpointColor, fillColor: controls.endpointColor, fillOpacity: 0.95, radius: 8, weight: 2 });
   }
 
   const map = state.taskMap.leafletMap;
@@ -3037,13 +3174,7 @@ function ensureTaskMapInitialized() {
 
   const viewportLayer = L.layerGroup().addTo(leafletMap);
 
-  L.control.layers(baseLayers, {
-    "Points (pop-ups)": pointsLayer,
-    "Trajectory": trajectoryLayer,
-    "Trajectory Points": trajectoryPointsLayer,
-    "Start/End": endpointLayer,
-    "Viewports": viewportLayer,
-  }, { collapsed: false }).addTo(leafletMap);
+  L.control.layers(baseLayers, null, { collapsed: false }).addTo(leafletMap);
 
   state.taskMap = {
     leafletMap,
@@ -3583,6 +3714,20 @@ function renderTimelineModalContent(eventsPayload) {
   }).join("");
 
   const legendHtml = buildLegendHtml(usedNames);
+  const timelineAxisStops = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({
+    leftPct: ratio * 100,
+    label: fmtTimelineAxisTime(totalMs * ratio),
+  }));
+  const timelineAxisHtml = `
+    <div class="timeline-axis" aria-hidden="true">
+      ${timelineAxisStops.map((stop) => `
+        <div class="timeline-axis-stop" style="left:${stop.leftPct}%;">
+          <span class="timeline-axis-tick"></span>
+          <span class="timeline-axis-label">${escapeHtml(stop.label)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
 
   container.innerHTML = `
     <div style="
@@ -3616,6 +3761,8 @@ function renderTimelineModalContent(eventsPayload) {
         " id="timelineBar">
           ${segmentsHtml}
         </div>
+      
+        ${timelineAxisHtml}
 
       <!-- Slider + readout -->
         <div style="margin-top:12px;">
@@ -3880,7 +4027,8 @@ function openGroupExportChooserModal() {
   const backdrop = $("#groupExportChooserBackdrop");
   const spatialBtn = $("#groupExportChooserSpatialBtn");
   const gazeplotterBtn = $("#groupExportChooserGazeplotterBtn");
-  if (!modal || !closeBtn || !backBtn || !backdrop || !spatialBtn || !gazeplotterBtn) {
+  const csvBtn = $("#groupExportChooserCsvBtn");
+  if (!modal || !closeBtn || !backBtn || !backdrop || !spatialBtn || !gazeplotterBtn || !csvBtn) {
     return;
   }
 
@@ -3896,6 +4044,45 @@ function openGroupExportChooserModal() {
   const runGazeplotterExport = async () => {
     closeModal();
     await exportGazeplotterForCurrentGroupSessions({ skipConfirm: true });
+  };
+
+  const runCsvExport = async () => {
+    closeModal();
+    await exportCurrentGroupCsv();
+  };
+
+  closeBtn.onclick = closeModal;
+  backBtn.onclick = closeModal;
+  backdrop.onclick = closeModal;
+  spatialBtn.onclick = runSpatialExport;
+  gazeplotterBtn.onclick = runGazeplotterExport;
+  csvBtn.onclick = runCsvExport;
+  show(modal);
+}
+
+function openSessionExportChooserModal() {
+  const modal = $("#sessionExportChooserModal");
+  const closeBtn = $("#sessionExportChooserCloseBtn");
+  const backBtn = $("#sessionExportChooserBackBtn");
+  const backdrop = $("#sessionExportChooserBackdrop");
+  const spatialBtn = $("#sessionExportChooserSpatialBtn");
+  const gazeplotterBtn = $("#sessionExportChooserGazeplotterBtn");
+  if (!modal || !closeBtn || !backBtn || !backdrop || !spatialBtn || !gazeplotterBtn) {
+    return;
+  }
+
+  const closeModal = () => {
+    hide(modal);
+  };
+
+  const runSpatialExport = () => {
+    closeModal();
+    openSessionMapModal();
+  };
+
+  const runGazeplotterExport = async () => {
+    closeModal();
+    await exportTimelineCsvForSelectedSession();
   };
 
   closeBtn.onclick = closeModal;
@@ -4078,6 +4265,7 @@ function getMapControlsState() {
     showAllViewportRects: $("#mapShowAllViewportRects")?.checked ?? false,
     pointsColor: $("#mapPointsColorInput")?.value ?? "#4cc9f0",
     lineColor: $("#mapLineColorInput")?.value ?? "#f72585",
+    endpointColor: $("#mapEndpointColorInput")?.value ?? "#ff9f1c",
   };
 }
 
@@ -4096,10 +4284,11 @@ function syncMapLegend() {
     lineSwatch.style.opacity = controls.showTrajectory ? "1" : ".35";
   }
   if (endpointSwatch) {
+    endpointSwatch.style.background = controls.endpointColor;
     endpointSwatch.style.opacity = controls.showEndpoints ? "1" : ".35";
   }
   if (viewportSwatch) {
-    viewportSwatch.style.opacity = controls.showViewportRects ? "1" : ".35";
+    viewportSwatch.style.opacity = (controls.showViewportRects && state.map.viewportRectangles.length > 0) ? "1" : ".35";
   }
 }
 
@@ -4146,8 +4335,8 @@ function applyMapLayerStyles() {
 
   if (endpointLayer?.setStyle) {
     endpointLayer.setStyle({
-      color: "#ff9f1c",
-      fillColor: "#ff9f1c",
+      color: controls.endpointColor,
+      fillColor: controls.endpointColor,
       fillOpacity: 0.95,
       radius: 8,
       weight: 2,
@@ -4576,13 +4765,7 @@ function ensureSessionMapInitialized() {
 
   const viewportLayer = L.layerGroup().addTo(leafletMap);
 
-  L.control.layers(baseLayers, {
-    "Points": pointsLayer,
-    "Trajectory": trajectoryLayer,
-    "Trajectory Points": trajectoryPointsLayer,
-    "Start/End": endpointLayer,
-    "Viewports": viewportLayer,
-  }, { collapsed: false }).addTo(leafletMap);
+  L.control.layers(baseLayers, null, { collapsed: false }).addTo(leafletMap);
 
   state.map.leafletMap = leafletMap;
   state.map.baseLayers = baseLayers;
@@ -5173,6 +5356,11 @@ function renderGroupCompareMovementTab(groups) {
               <span>${escapeHtml(option.label)}</span>
             </label>
           `).join("")}
+          <label class="interval-ratios-toggle">
+            <input type="checkbox" data-role="groups-compare-interval-other-toggle" ${state.groupCompareMovementSelection.showOther ? "checked" : ""} />
+            <span class="interval-ratios-dot" style="background:${INTERVAL_OTHER_OPTION.color};"></span>
+            <span>Show Other</span>
+          </label>
         </div>
       </div>
     </div>
@@ -5188,7 +5376,10 @@ function renderGroupCompareMovementTab(groups) {
       </div>
     `;
   } else {
-    const rows = [...INTERVAL_EVENT_OPTIONS.filter((option) => selectedVisible.has(option.key)), INTERVAL_OTHER_OPTION]
+    const rows = [
+      ...INTERVAL_EVENT_OPTIONS.filter((option) => selectedVisible.has(option.key)),
+      ...(state.groupCompareMovementSelection.showOther ? [INTERVAL_OTHER_OPTION] : []),
+    ]
       .map((option) => {
         const barRows = availableAggregates.map((item) => {
           const eventPayload = item.aggregate.events?.[option.key] ?? {};
@@ -5250,6 +5441,10 @@ function renderGroupCompareMovementTab(groups) {
         .map((checkbox) => checkbox.value);
       renderGroupCompareModal();
     });
+  });
+  $(`#groupsCompareMovementEventToggles [data-role='groups-compare-interval-other-toggle']`)?.addEventListener("change", (e) => {
+    state.groupCompareMovementSelection.showOther = Boolean(e.target?.checked);
+    renderGroupCompareModal();
   });
 }
 
@@ -5566,7 +5761,7 @@ async function renderGroupCompareChartTab(groups) {
         </div>
       `).join("")}
     </div>
-    <div class="compare-chart-canvas-wrap">
+    <div class="compare-chart-canvas-wrap compare-chart-canvas-wrap--answer">
       <svg viewBox="0 0 ${width} ${height}" class="compare-chart-svg" role="img" aria-label="Comparison of answer accuracy between groups">
         <text x="${width / 2}" y="18" class="compare-chart-title">Answer correctness (%)</text>
         ${gridLines}
@@ -5622,7 +5817,7 @@ async function renderGroupCompareChartTab(groups) {
   });
 
   const tooltip = $("#groupCompareChartTooltip");
-  const chartWrap = $(".compare-chart-canvas-wrap");
+  const chartWrap = $(".compare-chart-canvas-wrap--answer");
   const svgEl = chartWrap?.querySelector(".compare-chart-svg");
 
   const positionTooltipNearPoint = (pointEl) => {
@@ -6413,13 +6608,11 @@ function renderGroupEditSessionsList() {
   const sessions = getGroupEditCurrentGroupSessions();
   renderGroupEditFilterControls(sessions);
   const filtered = getGroupEditFilteredSessions();
-  const selectedSet = new Set(state.groupEditSessionIds ?? []);
   const flaggedSet = new Set(state.groupEditFlaggedSessionIds ?? []);
 
   if (summaryEl) {
-    const selectedCount = sessions.filter((x) => selectedSet.has(x.session_id)).length;
     const flaggedCount = sessions.filter((x) => flaggedSet.has(x.session_id)).length;
-    summaryEl.textContent = `Showing ${filtered.length} of ${sessions.length} · Selected ${selectedCount} · Flagged ! ${flaggedCount} · Order by ${formatSortSummary(state.groupEditSort)}`;
+    summaryEl.textContent = `Showing ${filtered.length} of ${sessions.length} · Flagged ! ${flaggedCount} · Order by ${formatSortSummary(state.groupEditSort)}`;
   }
 
   if (!filtered.length) {
@@ -6428,39 +6621,44 @@ function renderGroupEditSessionsList() {
     return;
   }
 
-  listEl.innerHTML = filtered.map((s) => {
-    const checked = selectedSet.has(s.session_id) ? "checked" : "";
+  listEl.innerHTML = `
+    ${renderSessionListHeader({
+      actionHeaderHtml: `<button class="btn btn-ghost group-edit-flag" type="button" data-role="group-edit-master-flag" aria-pressed="false" data-tooltip="Mark displayed for removal">!</button>`,
+      showCheckbox: false,
+    })}
+    ${filtered.map((s) => {
     const flagged = flaggedSet.has(s.session_id) ? "is-flagged" : "";
     const active = state.groupEditSelectedSessionId === s.session_id ? "is-selected" : "";
     return `
-      <div class="list-item ${active}" data-role="group-edit-item" data-session="${escapeHtml(s.session_id)}" style="cursor:default;">
-        <div class="row" style="justify-content:space-between; align-items:flex-start; gap:8px;">
-          <label class="row" style="justify-content:flex-start; gap:10px; cursor:pointer;">
-            <input type="checkbox" data-role="group-edit-session" data-session="${escapeHtml(s.session_id)}" ${checked} />
-            <div>
-              <div class="title">${escapeHtml(s.user_id ?? "—")}</div>
-            </div>
-          </label>
-          <button class="btn btn-ghost group-edit-flag ${flagged}" aria-pressed="${flaggedSet.has(s.session_id) ? "true" : "false"}" data-role="group-edit-flag" data-session="${escapeHtml(s.session_id)}" type="button" title="Flag">!</button>
-        </div>
+      <div data-role="group-edit-item" data-session="${escapeHtml(s.session_id)}">
+        ${renderSessionListRow({
+          session: s,
+          rowId: s.session_id,
+          checkboxDataKey: "session",
+          showCheckbox: false,  
+          isActive: !!active,
+          sortConfig: state.groupEditSort,
+          actionColClass: flagged,
+          actionButtonHtml: `<button class=\"btn btn-ghost group-edit-flag ${flagged}\" aria-pressed=\"${flaggedSet.has(s.session_id) ? "true" : "false"}\" data-role=\"group-edit-flag\" data-session=\"${escapeHtml(s.session_id)}\" type=\"button\" title=\"Mark for removal\">!</button>`,
+          showCheckbox: false,
+        })}
       </div>
     `;
-  }).join("");
+  }).join("")}
+  `;
 
-    $$("#groupEditSessionsList [data-role='group-edit-item']").forEach((item) => {
-    item.addEventListener("click", (e) => {
-      if (e.target?.closest?.("input,button")) return;
-      state.groupEditSelectedSessionId = item.dataset.session ?? null;
+  $$("#groupEditSessionsList [data-role='list-main']").forEach((item) => {
+    item.addEventListener("click", () => {
+      const sid = item.dataset.session ?? null;
+      state.groupEditSelectedSessionId = sid;
       renderGroupEditSessionsList();
     });
   });
 
-  $$("#groupEditSessionsList input[data-role='group-edit-session']").forEach((input) => {
-    input.addEventListener("change", () => {
-      const sid = input.dataset.session;
-      const set = new Set(state.groupEditSessionIds ?? []);
-      if (input.checked) set.add(sid); else set.delete(sid);
-      state.groupEditSessionIds = Array.from(set);
+    $$("#groupEditSessionsList [data-role='group-edit-item']").forEach((item) => {
+    item.addEventListener("click", (e) => {
+      if (e.target?.closest?.("input,button:not(.list-item-main)")) return;
+      state.groupEditSelectedSessionId = item.dataset.session ?? null;
       renderGroupEditSessionsList();
     });
   });
@@ -6475,13 +6673,31 @@ function renderGroupEditSessionsList() {
     });
   });
 
+  const displayedIds = filtered.map((s) => s.session_id);
+  const flaggedDisplayedCount = displayedIds.filter((id) => flaggedSet.has(id)).length;
+
+  const masterFlagBtn = $("#groupEditSessionsList button[data-role='group-edit-master-flag']");
+  if (masterFlagBtn) {
+    const allDisplayedFlagged = displayedIds.length > 0 && flaggedDisplayedCount === displayedIds.length;
+    const partialFlagged = flaggedDisplayedCount > 0 && flaggedDisplayedCount < displayedIds.length;
+    masterFlagBtn.classList.toggle("is-flagged", allDisplayedFlagged);
+    masterFlagBtn.classList.toggle("is-partial", partialFlagged);
+    masterFlagBtn.setAttribute("aria-pressed", allDisplayedFlagged ? "true" : "false");
+    masterFlagBtn.setAttribute("title", allDisplayedFlagged ? "Clear removal marks for displayed" : "Mark displayed for removal");
+    masterFlagBtn.addEventListener("click", () => {
+      const next = new Set(state.groupEditFlaggedSessionIds ?? []);
+      if (allDisplayedFlagged) displayedIds.forEach((id) => next.delete(id));
+      else displayedIds.forEach((id) => next.add(id));
+      state.groupEditFlaggedSessionIds = Array.from(next);
+      renderGroupEditSessionsList();
+    });
+  }
+
   renderGroupEditSessionMetrics();
 }
 
 function wireGroupEditFilters() {
   const ids = ["#groupEditFilterGender", "#groupEditFilterOccupation", "#groupEditFilterNationality", "#groupEditFilterEducation", "#groupEditFilterDevice", "#groupEditFilterConfidence", "#groupEditFilterPaperMaps", "#groupEditFilterComputerMaps", "#groupEditFilterMobileMaps", "#groupEditFilterTasksMin", "#groupEditFilterTasksMax", "#groupEditFilterEventsMin", "#groupEditFilterEventsMax", "#groupEditFilterDurationMin", "#groupEditFilterDurationMax", "#groupEditFilterAccuracyMin", "#groupEditFilterAccuracyMax", "#groupEditFilterAgeMin", "#groupEditFilterAgeMax", "#groupEditSearchInput"];
-  const selectAllBtn = $("#groupEditSelectAllBtn");
-  const clearSelectionBtn = $("#groupEditClearSelectionBtn");
   const clearBtn = $("#groupEditClearFiltersBtn");
   const onlyFlaggedBtn = $("#groupEditOnlyFlaggedBtn");
   const sortKeyEl = $("#groupEditSortKey");
@@ -6525,21 +6741,10 @@ function wireGroupEditFilters() {
     renderGroupEditSessionsList();
   });
 
-  selectAllBtn?.addEventListener("click", () => {
-    const set = new Set(state.groupEditSessionIds ?? []);
-    getGroupEditFilteredSessions().forEach((s) => set.add(s.session_id));
-    state.groupEditSessionIds = Array.from(set);
-    renderGroupEditSessionsList();
-  });
-
-  clearSelectionBtn?.addEventListener("click", () => {
-    state.groupEditSessionIds = [];
-    renderGroupEditSessionsList();
-  });
-
   clearBtn?.addEventListener("click", () => {
     state.groupEditFilters = { gender: "", ageMin: "", ageMax: "", occupation: "", nationality: "", education: "", device: "", confidence: "", paper_maps: "", computer_maps: "", mobile_maps: "", tasksMin: "", tasksMax: "", eventsMin: "", eventsMax: "", durationMin: "", durationMax: "", accuracyMin: "", accuracyMax: "", query: "" };
     state.groupEditShowOnlyFlagged = false;
+    state.groupEditSort = { key: "default", direction: "asc" };
     renderGroupEditSessionsList();
   });
 }
@@ -7134,6 +7339,10 @@ function wireNavButtons() {
     await navigateToRoute({ name: ROUTE_NAMES.SESSIONS, testId: state.selectedTestId });
   });
 
+  $("#openSessionExportModalBtn")?.addEventListener("click", () => {
+    openSessionExportChooserModal();
+  });
+
   $("#backFromSettingsBtn")?.addEventListener("click", async () => {
     await navigateToRoute({ name: ROUTE_NAMES.DASHBOARD });
   });
@@ -7269,9 +7478,7 @@ function wireNavButtons() {
   });
 
   $("#deleteGroupBtn")?.addEventListener("click", deleteCurrentGroup);
-  $("#groupEditCreateGroupFromSelectedBtn")?.addEventListener("click", openGroupSplitModal);
   $("#groupEditDeleteFlaggedBtn")?.addEventListener("click", deleteFlaggedFromGroup);
-  $("#groupEditExportCsvBtn")?.addEventListener("click", exportCurrentGroupCsv);
   $("#sessionVisibleFiltersBtn")?.addEventListener("click", () => openVisibleFiltersModal("sessions"));
   $("#groupEditVisibleFiltersBtn")?.addEventListener("click", () => openVisibleFiltersModal("groupEdit"));
   $("#closeGroupMovementRatiosBtn")?.addEventListener("click", closeGroupMovementRatiosModal);
@@ -7362,6 +7569,7 @@ function wireModal() {
     "#mapShowAllViewportRects",
     "#mapPointsColorInput",
     "#mapLineColorInput",
+    "#mapEndpointColorInput",
   ];
   mapControlIds.forEach((sel) => {
     const el = $(sel);
@@ -7378,6 +7586,7 @@ function wireModal() {
     "#taskMapShowAllViewportRects",
     "#taskMapPointsColorInput",
     "#taskMapLineColorInput",
+    "#taskMapEndpointColorInput",
   ];
   taskMapControlIds.forEach((sel) => {
     const el = $(sel);
@@ -7596,12 +7805,11 @@ function wireSessionFilters() {
   const ageMaxEl = $("#sessionFilterAgeMax");
   const userIdEl = $("#sessionFilterUserId");
   const clearBtn = $("#clearSessionFiltersBtn");
-  const selectAllBtn = $("#selectFilteredSessionsBtn");
   const clearSelectionBtn = $("#clearSessionSelectionBtn");
   const sortKeyEl = $("#sessionSortKey");
   const sortDirectionEl = $("#sessionSortDirection");
 
-if (!genderEl || !occupationEl || !nationalityEl || !educationEl || !deviceEl || !confidenceEl || !paperMapsEl || !computerMapsEl || !mobileMapsEl || !tasksMinEl || !tasksMaxEl || !eventsMinEl || !eventsMaxEl || !durationMinEl || !durationMaxEl || !accuracyMinEl || !accuracyMaxEl || !ageMinEl || !ageMaxEl || !userIdEl || !clearBtn || !selectAllBtn || !clearSelectionBtn) return;
+if (!genderEl || !occupationEl || !nationalityEl || !educationEl || !deviceEl || !confidenceEl || !paperMapsEl || !computerMapsEl || !mobileMapsEl || !tasksMinEl || !tasksMaxEl || !eventsMinEl || !eventsMaxEl || !durationMinEl || !durationMaxEl || !accuracyMinEl || !accuracyMaxEl || !ageMinEl || !ageMaxEl || !userIdEl || !clearBtn || !clearSelectionBtn) return;
 
   const updateAndRender = () => {
     state.sessionFilters.gender = genderEl.value;
@@ -7656,18 +7864,6 @@ if (!genderEl || !occupationEl || !nationalityEl || !educationEl || !deviceEl ||
     renderSessionsList();
   });
 
-  selectAllBtn.addEventListener("click", () => {
-    const sessions = getSessionsForSelectedTest();
-    const filteredSessions = applySessionFilters(sessions);
-    if (!filteredSessions.length) return;
-
-    const selected = new Set(state.selectedSessionIds ?? []);
-    filteredSessions.forEach((session) => selected.add(session.session_id));
-    state.selectedSessionIds = Array.from(selected);
-    persistGroupDraftSelection();
-    renderSessionsList();
-  });
-
   clearSelectionBtn.addEventListener("click", () => {
     state.selectedSessionIds = [];
     persistGroupDraftSelection();
@@ -7676,6 +7872,7 @@ if (!genderEl || !occupationEl || !nationalityEl || !educationEl || !deviceEl ||
 
   clearBtn.addEventListener("click", () => {
     state.sessionFilters = getDefaultSessionFilters();
+    state.sessionSort = { key: "default", direction: "asc" };
     renderSessionsList();
   });
 }
