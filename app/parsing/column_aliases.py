@@ -1,3 +1,10 @@
+
+"""
+Column alias resolution for socio-demographic fields in heterogeneous CSV headers.
+Header names are normalized to handle casing, separators, and diacritics.
+Callers use this mapping to read canonical fields without hard-coding source variants.
+"""
+
 from __future__ import annotations
 
 import re
@@ -5,6 +12,7 @@ import unicodedata
 from typing import Dict, Iterable, Optional
 
 
+"""Normalize headers so aliases match across accents, case, and separators."""
 def _normalize_column_name(value: str) -> str:
     s = str(value or "").strip().casefold()
     s = unicodedata.normalize("NFKD", s)
@@ -33,6 +41,7 @@ SOC_DEMO_COLUMN_ALIASES = {
 }
 
 
+"""Map canonical keys to actual CSV column names when available."""
 def resolve_column_aliases(
     columns: Iterable[str],
     alias_map: Dict[str, set[str]],

@@ -1,3 +1,10 @@
+
+"""
+Core parser for MishPink CSV exports and derived spatial payload helpers.
+It converts raw rows into structured events, task streams, and session-level models.
+The same module also provides coordinate/viewport parsing used by map and export endpoints.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,15 +29,15 @@ class Viewport:
 @dataclass
 class ParsedEvent:
     """
-    Normalizovaný event z MapTrack CSV.
-    Všechno, co budeš později analyzovat, je tady:
+    Normalized events used by downstream analytics.
+    Fields consumed by downstream analytics:
     - timestamp_ms: int
     - event_name: str
     - task_id: str | None
     - viewport: Viewport
-    - detail: původní raw event_detail
-    - parsed: strukturovaný detail (lat/lon/zoom/value/...)
-    - row_index: index řádku v CSV (pro debug)
+    - detail: original raw event_detail
+    - parsed: structured detail (lat/lon/zoom/value/...)
+    - row_index: CSV row index (debugging)
     """
     timestamp_ms: int
     event_name: str
@@ -44,8 +51,8 @@ class ParsedEvent:
 @dataclass
 class TaskStream:
     """
-    Jeden task (úloha) uvnitř session.
-    - events: všechny eventy patřící do tasku (v časovém pořadí)
+    One task stream within a session.
+    - events: all task events in time order
     """
     task_id: str
     events: List[ParsedEvent]
@@ -54,9 +61,9 @@ class TaskStream:
 @dataclass
 class ParsedSession:
     """
-    Celá session (jeden CSV soubor).
-    - tasks: mapuje task_id -> TaskStream
-    - events: všechny eventy (také v pořadí), i když třeba task_id není známé
+   Whole session parsed from one CSV file.
+    - tasks: maps task_id -> TaskStream
+    - events: all events in order, even when task_id is unknown
     """
     session_id: str
     user_id: Optional[str]
@@ -70,7 +77,7 @@ class ParsedSession:
 
 def infer_session_id_from_filename(filename: str) -> str:
     """
-    SessionID máš v názvu souboru. Bereme stem bez přípony a vyčistíme.
+    Session id comes from filename stem with sanitization.
     """
     stem = filename.rsplit(".", 1)[0]
     cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", stem).strip("_")
@@ -79,20 +86,20 @@ def infer_session_id_from_filename(filename: str) -> str:
 
 def _parse_timestamp_ms(v: Any) -> int:
     """
-    timestamp v MapTrack datech bývá ms od startu session.
-    Potřebujeme int, ať se na tom dá dělat diff/thresholdy.
+    timestamps are milliseconds from session start.
+    Use int to keep diffs and thresholds predictable.
     """
     try:
         n = int(float(v))
         return n
     except Exception:
-        # fallback: když je to fakt rozbité, dáme 0 a později to ošetříme v metrikách
+        # Keep invalid timestamps at zero so later metrics can handle them consistently
         return 0
 
 
 def _parse_viewport_size(v: Any) -> Viewport:
     """
-    viewportSize typicky: "1280x585" nebo "1920x1080"
+    viewportSize typically looks like "1280x585" or "1920x1080"
     """
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return Viewport()
@@ -127,9 +134,8 @@ ORIENTATION_DETAIL_PATTERN = re.compile(r"\b(landscape|portrait)\s*[-_ ]?\s*(pri
 
 def _extract_orientation_from_event_detail(event_detail: Any) -> Optional[str]:
     """
-    orientation change event_detail může být ve volném textu:
-    např. "portrait-primary, 90 degrees." nebo "landscape secondary".
-    Vrací normalizaci pro výpočet viewportu (landscape/portrait primary).
+     orientation change event_detail may contain free text:
+    Returns normalized orientation for viewport calculations.
     """
     if event_detail is None or (isinstance(event_detail, float) and pd.isna(event_detail)):
         return None
@@ -231,7 +237,7 @@ COORDINATE_PATTERN = re.compile(
 
 def _parse_lat_lon(s: str) -> Optional[Tuple[float, float]]:
     """
-    očekává "lat, lon" ve WGS84 a validuje rozsahy.
+    Expects "lat, lon" in WGS84 and validates ranges.
     """
     m = COORDINATE_PATTERN.match(s)
     if not m:
@@ -245,8 +251,8 @@ def _parse_lat_lon(s: str) -> Optional[Tuple[float, float]]:
 
 def parse_coordinate_detail_if_allowed(event_name: str, event_detail: Any) -> Optional[Tuple[float, float]]:
     """
-    Souřadnice parsuje pouze pro explicitně podporované eventy.
-    event_detail je polymorfní, proto pro ostatní eventy vždy vrací None.
+    Coordinates are parsed only for explicitly supported events.
+    event_detail is polymorphic, so other events always return None.
     """
     if event_name not in COORDINATE_EVENT_NAMES:
         return None
@@ -256,12 +262,12 @@ def parse_coordinate_detail_if_allowed(event_name: str, event_detail: Any) -> Op
 
 def parse_event_detail(event_name: str, event_detail: Any) -> Dict[str, Any]:
     """
-    Z event_detail udělá strukturovaný dict.
-    Teď pokrýváme to, co víme, že budeme potřebovat:
+    Build a structured dict from event_detail.
+    Covers event shapes currently used by the app:
     - movestart/moveend/popupopen/popupclose: lat/lon
     - zoom in/zoom out: zoom
     - setting task: task_id
-    - ostatní: value (string)
+    - everything else: value (string)
     """
     if event_detail is None or (isinstance(event_detail, float) and pd.isna(event_detail)):
         return {}
@@ -281,7 +287,7 @@ def parse_event_detail(event_name: str, event_detail: Any) -> Dict[str, Any]:
             return {}
 
     if event_name == "setting task":
-        # v event_detail bývá id tasku typu "01A-v1" apod.
+         # event_detail usually carries values like "01A-v1"
         return {"task_id": s}
 
     # popupopen:name / polygon selected / show layer / hide layer / answer selected / ...
@@ -323,8 +329,8 @@ def build_spatial_trace_for_user(
     task_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Připraví spatial data pro Leaflet pro jednoho uživatele/session.
-    Výstup:
+    Prepare Leaflet-ready spatial data for one user/session.
+    Output:
     {
       userId: str,
       track: {
@@ -559,7 +565,7 @@ def validate_maptrack_df(df: pd.DataFrame) -> None:
     required = {"timestamp", "event_name", "event_detail"}
     missing = required - set(df.columns)
     if missing:
-        raise ValueError(f"CSV chybí povinné sloupce: {sorted(missing)}")
+        raise ValueError(f"CSV is missing required columns: {sorted(missing)}")
 
 def read_maptrack_csv(path: str) -> pd.DataFrame:
     df = pd.read_csv(path)
@@ -583,12 +589,12 @@ def parse_session_df(
     session_id_override: Optional[str] = None,
 ) -> ParsedSession:
     """
-    Komplexní parsing:
-    - načte CSV
-    - udělá ParsedEvent pro každý řádek
-    - přiřadí eventy do tasků:
-        A) primárně podle sloupce 'task' (pokud existuje)
-        B) fallback: když 'task' není, tak state machine přes event 'setting task'
+   Session parsing flow:
+    - reads CSV
+    - creates ParsedEvent for each row
+    - assigns events to tasks:
+        A) primarily from column 'task' (if present)
+        B) fallback: state machine driven by 'setting task' when 'task' is missing
     """
     validate_maptrack_df(df)
 
@@ -602,7 +608,7 @@ def parse_session_df(
         if user_id_col and len(df) > 0:
             user_id = _normalize_task_id(df[user_id_col].iloc[0])
 
-    current_task: Optional[str] = None  # pro fallback režim
+    current_task: Optional[str] = None  # state used when CSV does not provide explicit task on every row
 
     events: List[ParsedEvent] = []
     tasks: Dict[str, TaskStream] = {}
@@ -650,14 +656,14 @@ def parse_session(csv_path: str, filename: str) -> ParsedSession:
 
 
 # =========================
-# Convenience for later
+# Convenience for helpers
 # =========================
 
 def list_task_ids(session: ParsedSession) -> List[str]:
     """
-    Stabilní pořadí tasků (podle prvního výskytu).
+    Stable task order based on first occurrence.
     """
-    # první výskyt task_id v events
+    # first occurrence wins
     seen = set()
     ordered: List[str] = []
     for ev in session.events:

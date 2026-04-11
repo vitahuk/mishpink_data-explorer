@@ -1,3 +1,10 @@
+
+"""
+Normalization helpers for free-text nationality values from uploaded CSV files.
+The module combines deterministic aliases with optional fuzzy matching libraries for better recall.
+Output is a canonical country name whenever a reliable match is found.
+"""
+
 from __future__ import annotations
 
 import re
@@ -42,8 +49,8 @@ if pycountry is not None:
             getattr(country, "alpha_2", ""),
             getattr(country, "alpha_3", ""),
         }
-
-        # některé datasety používají historické GER apod.
+        
+        # Some datasets still use bibliographic alpha-3 codes.
         historic_alpha3 = getattr(country, "bibliographic", "")
         if historic_alpha3:
             candidates.add(historic_alpha3)
@@ -54,7 +61,7 @@ if pycountry is not None:
                 _COUNTRY_BY_TOKEN[token] = canonical
 
 
-# fallback a demonyma / běžné varianty
+# Demonyms and common local variants seen in uploaded CSVs.
 _DEMONYM_ALIASES = {
     "german": "Germany",
     "ger": "Germany",
@@ -87,7 +94,7 @@ for alias, canonical_country in _DEMONYM_ALIASES.items():
 
 _KNOWN_TOKENS = sorted(_COUNTRY_BY_TOKEN.keys())
 
-
+"""Normalize free-text nationality values to canonical country names."""
 def normalize_nationality(value: Any) -> Optional[str]:
     token = _normalize_token(value)
     if not token:
@@ -97,7 +104,7 @@ def normalize_nationality(value: Any) -> Optional[str]:
     if direct:
         return direct
 
-    # pokud je k dispozici knihovna, zkusíme její lookup
+    # pycountry lookup catches exact identifiers not covered in local alias map
     if pycountry is not None:
         try:
             looked_up = pycountry.countries.lookup(str(value).strip())

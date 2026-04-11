@@ -1,3 +1,10 @@
+
+"""
+Persistence layer for experiments, sessions, groups, and answer data.
+The module defines SQLAlchemy models, schema bootstrapping, and compatibility migrations.
+It exposes a store API used by the FastAPI layer for reads and writes.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -117,6 +124,7 @@ class GroupSessionRecord(Base):
 
 
 def _build_database_url() -> str:
+    """Prefer DATABASE_URL when set, otherwise use local SQLite path."""
     configured_url = os.getenv("DATABASE_URL")
     if configured_url:
         return configured_url
@@ -140,6 +148,7 @@ if DATABASE_URL.startswith("sqlite"):
 
 
 def _normalize_test_answers_data(raw: Any) -> Dict[str, Dict[str, str]]:
+    """Coerce legacy JSON answers into {test_id: {task_id: answer}} shape."""
     if not isinstance(raw, dict):
         return {}
 
@@ -175,6 +184,7 @@ def _load_test_answers_from_json() -> Dict[str, Dict[str, str]]:
 
 
 def _normalize_groups_data(raw: Any) -> List[Dict[str, Any]]:
+    """Coerce legacy JSON group records into normalized list entries."""
     if not isinstance(raw, list):
         return []
 
@@ -237,6 +247,7 @@ _migration_lock = threading.Lock()
 
 
 def _migrate_json_seed_data() -> None:
+    """One-time migration from JSON seed files into relational tables."""
     with _migration_lock:
         with SessionLocal() as db:
             answers_seed = _load_test_answers_from_json()
@@ -279,6 +290,7 @@ def init_db() -> None:
     _migrate_json_seed_data()
 
 def _ensure_schema_updates() -> None:
+    """Apply additive schema updates for existing databases."""
     inspector = inspect(engine)
 
     test_columns = {col["name"] for col in inspector.get_columns("tests")}

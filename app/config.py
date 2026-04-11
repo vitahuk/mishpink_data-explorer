@@ -1,3 +1,10 @@
+
+"""
+Runtime configuration for paths, session settings, and required secrets.
+Values are read from environment variables with strict validation and predictable defaults.
+Directory paths are resolved relative to the project root when not absolute.
+"""
+
 from __future__ import annotations
 
 import os
@@ -7,6 +14,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 WEB_DIR = BASE_DIR / "web"
 
 
+"""Resolve env path values relative to project root."""
 def _resolve_path(raw_value: str | None, *, default: Path) -> Path:
     value = (raw_value or "").strip()
     if not value:
@@ -23,7 +31,6 @@ def _get_required_env(name: str) -> str:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
 
-
 def _get_positive_int_env(name: str, default: int) -> int:
     raw = (os.getenv(name) or "").strip()
     if not raw:
@@ -35,7 +42,6 @@ def _get_positive_int_env(name: str, default: int) -> int:
     if value <= 0:
         raise RuntimeError(f"Environment variable {name} must be greater than 0.")
     return value
-
 
 def _get_bool_env(name: str, default: bool) -> bool:
     raw = (os.getenv(name) or "").strip().lower()

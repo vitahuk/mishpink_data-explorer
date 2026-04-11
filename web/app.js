@@ -397,6 +397,7 @@ const ROUTE_NAMES = {
   SETTINGS: "settings",
 };
 
+// ===== URL Router & Deep-Link State Sync =====
 function encodeRoutePart(value) {
   return encodeURIComponent(String(value ?? "").trim());
 }
@@ -409,6 +410,7 @@ function decodeRoutePart(value) {
   }
 }
 
+// Keep URL routing as a first-class state source so deep links open the exact view context.
 function buildRoutePath(route) {
   if (!route || !route.name) return "/";
   switch (route.name) {
@@ -511,6 +513,7 @@ async function navigateToRoute(route, { replace = false } = {}) {
   await applyRoute(route, { syncHistory: true, replace });
 }
 
+// Route transitions may require async data fetches before the target view can render safely.
 async function applyRoute(route, { syncHistory = false, replace = false } = {}) {
   const normalized = normalizeRoute(route);
   const routeTestId = normalizeTestId(normalized.testId);
@@ -568,6 +571,8 @@ function normalizeTestId(value) {
   return trimmed ? trimmed : null;
 }
 
+// ===== Local Persistence & App-Level Messaging =====
+// Local storage keeps the currently selected experiment stable between reloads.
 function loadTestsFromStorage() {
   let tests = [];
   try {
@@ -699,6 +704,7 @@ function setStatusMessage(statusEl, text, type = "info") {
   }
 }
 
+// ===== API Transport, Auth Boundaries & Error Mapping =====
 function normalizeErrorDetail(errDetail) {
   if (typeof errDetail === "string") {
     return { message: errDetail, errorCode: null };
@@ -741,6 +747,7 @@ function getFriendlyErrorMessage({ status, errorCode, fallbackMessage }) {
   return byStatus[status] ?? "Something went wrong. Please try again.";
 }
 
+// --- API layer ---
 function redirectToLogin() {
   if (window.location.pathname !== "/login") {
     window.location.assign("/login");
@@ -765,6 +772,7 @@ function setBusyCursor(isBusy) {
   document.body.classList.toggle("busy-cursor", isBusy);
 }
 
+// Shared request wrapper handles global busy cursor and auth-expiration redirect.
 async function apiFetch(path, options = {}) {
   activeApiRequestCount += 1;
   setBusyCursor(true);
@@ -1009,7 +1017,7 @@ async function apiCompareWordcloud(groupIds, taskId = null) {
   return res.json();
 }
 
-// NEW: raw events for timeline
+// Events for timeline
 async function apiGetSessionEvents(sessionId) {
   return apiGet(`/api/sessions/${encodeURIComponent(sessionId)}/events`);
 }
@@ -1039,7 +1047,7 @@ async function apiGetSessionSpatialTrace(sessionId, taskId = null) {
   return apiGet(`/api/sessions/${encodeURIComponent(sessionId)}/spatial-trace${query}`);
 }
 
-// ===== Rendering: metrics blocks =====
+// ===== Dashboard Metrics & Experiment List Rendering =====
 function renderMetricGrid(metricsObj, containerEl) {
   if (!containerEl) return;
 
@@ -1064,7 +1072,8 @@ function renderMetricGrid(metricsObj, containerEl) {
   containerEl.innerHTML = `<div class="metric-grid">${rows}</div>`;
 }
 
-// ===== Dashboard: Test aggregation per task =====
+// ===== Dashboard: Experiment aggregation =====
+ // Buckets sessions by task so dashboard cards can show per-task averages.
 function computeAggByTask(sessions) {
   const buckets = new Map();
 
@@ -1208,6 +1217,7 @@ function getSocDemo(session) {
   return session?.stats?.session?.soc_demo ?? {};
 }
 
+// ===== Session Table: Sorting, Filtering & Visibility Controls =====
 function normalizeFilterValue(value) {
   return String(value ?? "").trim().toLowerCase();
 }
@@ -1442,6 +1452,7 @@ function applySessionFilters(sessions) {
   return sortSessions(filtered, state.sessionSort);
 }
 
+// Shared filter engine used by sessions list, settings tab, and group edit workflow.
 function applyGenericSessionFilters(sessions, filters = {}) {
   const genderFilter = normalizeFilterValue(filters.gender);
   const occupationFilter = normalizeFilterValue(filters.occupation);
@@ -2051,6 +2062,7 @@ async function uploadSettingsAnswersCsv(file) {
   }
 }
 
+// ===== Settings Page: Answer Keys & Session Cleanup =====
 function renderSettingsSessionFilterControls() {
   const genderEl = $("#settingsSessionFilterGender");
   const occupationEl = $("#settingsSessionFilterOccupation");
@@ -2377,7 +2389,7 @@ async function saveUserTestSettings() {
   }
 }
 
-// ===== Tasks page =====
+// ===== Interval Ratio Analytics (Session + Group Scopes) =====
 function inferTasksForSelectedSession() {
   const s = state.selectedSession;
   if (!s) return [];
@@ -2451,6 +2463,8 @@ function getGroupRatioStatisticLabel(statistic = "average") {
   return GROUP_RATIO_STAT_OPTIONS.find((option) => option.key === statistic)?.label ?? "Average";
 }
 
+// Interval-ratio calculations power both per-session modal and group-level comparisons.
+// Interval ratios are normalized here so timeline and group aggregation use identical math.
 function extractScopeIntervalMetrics(scopePayload) {
   const taskDurationMs = Math.max(0, safeNum(scopePayload?.task_duration_ms) ?? 0);
   if (taskDurationMs <= 0) return null;
@@ -2501,6 +2515,7 @@ function getGroupIntervalRatioTaskOptions(sessions) {
   return options;
 }
 
+// Aggregate selected interval ratios into one comparable value per event bucket.
 function aggregateGroupIntervalRatios(sessions, taskKey = "ALL_TASKS", statistic = "average") {
   const scopes = (sessions ?? [])
     .map((session) => extractScopeIntervalMetrics(getIntervalRatioScopePayloadForSession(session, taskKey)))
@@ -2899,6 +2914,7 @@ function closeIntervalRatiosModal() {
   hide($("#intervalRatiosModal"));
 }
 
+// ===== Session Detail: Task Modal, Timeline & Spatial Drilldown =====
 function renderTasksList() {
   const listEl = $("#tasksList");
   const subtitleEl = $("#tasksInSessionSubtitle");
@@ -3461,7 +3477,6 @@ function buildTimelineItems(events) {
     }
 
     // If popup is open, collect useful detail from events that happen inside popup (optional)
-    // We keep it lightweight: only if event_detail exists and is text.
     if (openPopup && detail) {
       openPopup.details.push(`${name}: ${detail}`);
     }
@@ -3623,6 +3638,7 @@ function findItemAtTime(items, tMs) {
   return null;
 }
 
+// Build timeline visuals and summary metrics from one normalized event representation.
 function renderTimelineModalContent(eventsPayload) {
   const container = $("#timelineContent");
   if (!container) return;
@@ -3935,6 +3951,7 @@ function closeTimelineModal() {
   hide($("#timelineModal"));
 }
 
+// ===== Export Workflows: Timeline CSV, GazePlotter, Spatial GeoJSON =====
 function downloadCsvResponseBlob(blob, response, fallbackFileName) {
   const disposition = response.headers.get("Content-Disposition") || "";
   const match = disposition.match(/filename="([^"]+)"/i);
@@ -4256,6 +4273,7 @@ async function exportSpatialForCurrentGroupSessions(options = {}) {
   }
 }
 
+// ===== Leaflet Session Map: Layer Construction & Interaction =====
 function getMapControlsState() {
   return {
     showPoints: $("#mapShowPoints")?.checked ?? true,
@@ -4417,6 +4435,7 @@ function buildPointsFeatureCollection(spatial) {
   return { type: "FeatureCollection", features };
 }
 
+// Trajectory export uses moveend samples and optional synthetic end-point closure.
 function buildTrackFeatureCollection(spatial) {
   const points = Array.isArray(spatial?.track?.points) ? spatial.track.points : [];
   const coordinates = points
@@ -4475,6 +4494,7 @@ function buildTrackPointFeatureCollection(spatial) {
   return { type: "FeatureCollection", features };
 }
 
+// If viewport crosses antimeridian, return split polygons for valid GeoJSON rings.
 function buildViewportPolygonCoordinates(bounds) {
   if (!Array.isArray(bounds) || bounds.length !== 2) return [];
   const sw = bounds[0];
@@ -4591,6 +4611,7 @@ function fitMapToRenderedData() {
   }
 }
 
+// Single render entrypoint keeps all map layers synchronized for the current session payload.
 function renderSpatialTraceToMap(spatialPayload) {
   ensureSessionMapInitialized();
   clearSessionMapData();
@@ -4953,6 +4974,7 @@ function closeSessionMapModal() {
   hide($("#sessionMapModal"));
 }
 
+// ===== Group Workspace: Selection, Statistics & Comparison Data Prep =====
 async function refreshGroups() {
   const out = await apiListGroups(state.selectedTestId ?? "TEST");
   state.groups = out.groups ?? [];
@@ -5052,6 +5074,7 @@ function buildBoxplotStats(values) {
   };
 }
 
+// Normalize per-group aggregates for table and chart tabs from the same source sessions.
 function buildGroupCompareRows(groups, taskId = null) {
   return (groups ?? []).map((group) => {
     let sessions = Array.isArray(group?.sessions) ? group.sessions : [];
@@ -5514,6 +5537,7 @@ function getGroupTaskAccuracyMap(groupAnswersPayload, taskIds) {
   return nextCache;
 }
 
+// Produces aligned category axis + per-group series across selectable comparison dimensions.
 function buildGroupCompareChartData(groups, options = {}) {
   const dimensionCfg = GROUP_COMPARE_DIMENSIONS[state.groupCompareChartDimension] ?? GROUP_COMPARE_DIMENSIONS.nationality;
   const groupAnswersById = options.groupAnswersById ?? {};
@@ -5570,6 +5594,7 @@ function buildGroupCompareChartData(groups, options = {}) {
   };
 }
 
+// Jitter overlapping points so equal/near-equal values remain individually selectable.
 function computeSnappedOffsets(series, categories) {
   const result = new Map();
   const tolerance = 0.2;
@@ -5605,6 +5630,7 @@ function computeSnappedOffsets(series, categories) {
   return result;
 }
 
+// Chart render is async because task-dimension mode requires group answer payload prefetch.
 async function renderGroupCompareChartTab(groups) {
   const wrap = $("#groupsCompareChartWrap");
   if (!wrap) return;
@@ -5874,6 +5900,7 @@ async function renderGroupCompareChartTab(groups) {
   });
 }
 
+// ===== Answer Intelligence & Wordcloud Rendering =====
 function computeNumericStats(values) {
   const nums = values
     .map((v) => Number(v))
@@ -6052,6 +6079,7 @@ function renderMiniWordcloud(words = [], options = {}) {
   `;
 }
 
+// Fetches answers + wordcloud together so accuracy summary and cloud stay in sync.
 async function renderGroupAnswersAndWordcloud(group) {
   const panel = $("#groupAnswersPanel");
   if (!panel) return;
@@ -6182,6 +6210,7 @@ function renderGroupCompareAnswersTab(groups) {
   });
 }
 
+// ===== Group Editor: Membership, Filters & Batch Operations =====
 function renderGroupsPage() {
   const groupsListEl = $("#groupsList");
   const usersPanelEl = $("#groupUsersPanel");

@@ -1,3 +1,10 @@
+
+"""
+FastAPI application entry point for uploads, analysis endpoints, and exports.
+This module wires HTTP routes to parsing, metrics, and persistence layers used across the app.
+It also contains session-auth and timeline/spatial export helper flows.
+"""
+
 from __future__ import annotations
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request
@@ -74,31 +81,32 @@ AUTH_EXEMPT_PATHS = {
     "/api/auth/login",
 }
 
+# =========================
+# Authentication
+# =========================
 
 def _is_auth_exempt_path(path: str) -> bool:
     if path.startswith("/static/"):
         return True
     return path in AUTH_EXEMPT_PATHS
 
-
 def _base64url_encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
-
 
 def _base64url_decode(raw: str) -> bytes:
     padding = "=" * (-len(raw) % 4)
     return base64.urlsafe_b64decode(raw + padding)
 
-
 def _build_auth_cookie(auth_until: int) -> str:
+    """Sign auth payload so session state stays stateless on the server."""
     payload = {"auth_until": int(auth_until)}
     payload_json = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     payload_b64 = _base64url_encode(payload_json)
     signature = hmac.new(SESSION_SECRET.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{payload_b64}.{signature}"
 
-
 def _read_auth_payload(request: Request) -> Optional[Dict[str, Any]]:
+    """Validate and decode auth cookie payload."""
     raw_cookie = request.cookies.get(AUTH_COOKIE_NAME)
     if not raw_cookie or "." not in raw_cookie:
         return None
@@ -121,12 +129,10 @@ def _read_auth_payload(request: Request) -> Optional[Dict[str, Any]]:
         return None
     return payload
 
-
 def _get_auth_until(request: Request) -> Optional[int]:
     payload = _read_auth_payload(request)
     auth_until = payload.get("auth_until") if isinstance(payload, dict) else None
     return auth_until if isinstance(auth_until, int) else None
-
 
 def _is_authenticated(request: Request) -> bool:
     auth_until = _get_auth_until(request)
@@ -134,10 +140,8 @@ def _is_authenticated(request: Request) -> bool:
         return False
     return auth_until > int(time.time())
 
-
 def _clear_auth_cookie(response: Response) -> None:
     response.delete_cookie(AUTH_COOKIE_NAME)
-
 
 def _set_auth_cookie(response: Response, auth_until: int) -> None:
     response.set_cookie(
@@ -149,7 +153,6 @@ def _set_auth_cookie(response: Response, auth_until: int) -> None:
         secure=SESSION_COOKIE_SECURE,
         path="/",
     )
-
 
 def _unauthorized_response(path: str) -> Response:
     if path.startswith("/api/"):
@@ -170,6 +173,7 @@ async def require_login(request: Request, call_next):
         return await call_next(request)
 
     return _unauthorized_response(path)
+
 
 @app.get("/")
 def index():
@@ -220,7 +224,7 @@ def auth_logout():
 
 
 # =========================
-# Helpers
+# Helpers + error management
 # =========================
 
 def _create_upload_job(*, kind: str, filename: str, test_id: str) -> str:
@@ -279,8 +283,7 @@ def _raise_api_error(status_code: int, message: str, *, error_code: Optional[str
 
 def _read_soc_demo_row(csv_path: Path) -> Dict[str, Any]:
     """
-    Read just first row + relevant columns for soc-demo.
-    Fast and robust even for big CSVs.
+    Read soc-demographic fields from the first CSV row only.
     """
     try:
         df0 = pd.read_csv(csv_path, nrows=1)
@@ -307,6 +310,7 @@ def _normalize_user_id(value: Any) -> Optional[str]:
 
 
 def _read_soc_demo_rows_by_user(df: pd.DataFrame, user_col: str) -> Dict[str, Dict[str, Any]]:
+    """Capture first seen socio-demographic row per user id."""
     out: Dict[str, Dict[str, Any]] = {}
     resolved = resolve_column_aliases(df.columns, SOC_DEMO_COLUMN_ALIASES)
 
@@ -343,6 +347,7 @@ def _build_session_id_for_test_user(test_id: str, user_id: Any) -> str:
     return f"S{_sanitize_filename_component(normalized_test_id)}__{_sanitize_filename_component(normalized_user_id)}"
 
 def _read_session_events_df(csv_path: Path) -> pd.DataFrame:
+    """Load timeline-relevant event columns and infer missing task values."""
     usecols = ["timestamp", "event_name", "event_detail", "task"]
     try:
         df = pd.read_csv(csv_path, usecols=lambda c: c in usecols)
@@ -403,8 +408,12 @@ def _to_text_detail(value: Any) -> Optional[str]:
         return None
     return text
 
+# =========================
+# Timeline + GazePlotter
+# =========================
 
 def _build_timeline_items_from_events_df(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    """Collapse raw events into instant and interval timeline items."""
     events = []
     for _, row in df.iterrows():
         task = row.get("task") if "task" in df.columns else None
@@ -490,6 +499,7 @@ def _build_timeline_items_from_events_df(df: pd.DataFrame) -> List[Dict[str, Any
                 items.append({"type": "instant", "name": name, "ts": ts, "task": task})
             continue
         
+        # Close dangling popup interval when task changes mid-popup.
         if name == "setting task" and open_popup:
             items.append({
                 "type": "interval",
@@ -575,6 +585,7 @@ def _build_timeline_items_from_events_df(df: pd.DataFrame) -> List[Dict[str, Any
     return items
 
 def _build_task_start_offsets(events: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Compute per-task timestamp offsets for task-relative exports."""
     task_offsets: Dict[str, int] = {}
     first_task_id: Optional[str] = None
 
@@ -598,6 +609,7 @@ def _build_task_start_offsets(events: List[Dict[str, Any]]) -> Dict[str, int]:
     return task_offsets
 
 def _build_gazeplotter_segments_for_session(session: SessionData) -> List[Dict[str, Any]]:
+    """Build AOI segments compatible with GazePlotter import format."""
     csv_path = Path(session.file_path)
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail=f"CSV file for session '{session.session_id}' not found.")
@@ -678,7 +690,12 @@ def _resolve_test_export_name(test_id: str) -> str:
         return candidate
     return normalized_test_id
 
+# =========================
+# Spatial Data
+# =========================
+
 def _load_spatial_trace_for_session(session: SessionData, task_id: Optional[str] = None) -> Dict[str, Any]:
+    """Load one session CSV and return normalized spatial trace payload."""
     csv_path = Path(session.file_path)
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="CSV file for session not found.")
@@ -878,6 +895,10 @@ def _build_spatial_export_zip(filename_base: str, collections: Dict[str, Dict[st
     headers = {"Content-Disposition": f'attachment; filename="{zip_name}"'}
     return Response(content=zip_buffer.getvalue(), media_type="application/zip", headers=headers)
 
+# =========================
+# Movement Ratios
+# =========================
+
 INTERVAL_EVENT_NAME_MAP: Dict[str, str] = {
     "MOVE": "move",
     "ZOOM": "zoom",
@@ -1041,6 +1062,10 @@ def _compute_interval_event_ratios(
         },
     })
 
+# =========================
+# Helpers
+# =========================
+
 def _read_csv_flexible(path: Path) -> pd.DataFrame:
     """
     Tries common delimiters (comma/tab/auto) to support slightly different CSV exports.
@@ -1110,6 +1135,9 @@ def _extract_answers_by_task_from_df(df: pd.DataFrame) -> Dict[str, str]:
 
     return finalized
 
+# =========================
+# Correctness Evaluation
+# =========================
 
 def _similarity_score(a: str, b: str) -> float:
     if not a or not b:
@@ -1248,6 +1276,10 @@ def _recompute_answers_eval_for_test(test_id: str) -> Dict[str, int]:
 
     return {"matched": matched, "updated": updated}
 
+# =========================
+# Payload Builders
+# =========================
+
 def _serialize_session_payload(session: SessionData, *, include_file_path: bool = False) -> Dict[str, Any]:
     stats = session.stats if isinstance(session.stats, dict) else {}
     task_metrics = stats.get("tasks", {}) if isinstance(stats.get("tasks"), dict) else {}
@@ -1363,6 +1395,10 @@ def _build_group_answers_payload(group: Dict[str, Any]) -> Dict[str, Any]:
         },
         "users": by_user,
     }
+
+# =========================
+# Data Uploads
+# =========================
 
 def _process_single_csv(dst: Path, filename: str, test_id: str) -> Dict[str, Any]:
     parsed_session = parse_session(str(dst), filename)
@@ -1533,6 +1569,9 @@ def _run_upload_job(job_id: str, *, kind: str, dst: Path, filename: str, test_id
             error_code="UPLOAD_PROCESSING_ERROR",
         )
 
+# =========================
+# Wordcloud Data
+# =========================
 
 def _build_wordcloud_from_group_payload(payload: Dict[str, Any], task_id: Optional[str] = None) -> List[Dict[str, Any]]:
     tasks = payload.get("tasks", {}) if isinstance(payload.get("tasks"), dict) else {}

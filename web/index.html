@@ -13,7 +13,7 @@
 <body>
   <div class="app">
 
-    <!-- TOP BAR -->
+    <!-- HEADER -->
     <header class="topbar">
       <div class="topbar-left">
         <div class="brand">
@@ -44,7 +44,7 @@
     <!-- MAIN -->
     <main class="main">
 
-      <!-- PAGE 1: DASHBOARD = TESTY -->
+      <!-- PAGE 1: DASHBOARD -->
       <section class="page" id="view-dashboard">
         <div class="page-head">
           <div>
@@ -96,7 +96,7 @@
         </div>
       </section>
 
-      <!-- PAGE: Settings -->
+      <!-- PAGE: SETTINGS -->
       <section class="page hidden" id="view-settings">
         <div class="page-head">
           <div>
@@ -117,6 +117,7 @@
             <button class="tab-btn" type="button" role="tab" data-tab="user-test" aria-selected="false" data-tooltip="You can rename or delete the experiment here">User experiment settings</button>
           </div>
 
+          <!-- TAB: CORRECT ANSWERS -->
           <section class="tab-panel settings-answers-panel" data-panel="answers">
             <div class="card-head">
               <h2>Correct answers</h2>
@@ -143,7 +144,8 @@
             </div>
             <input id="settingsAnswersCsvInput" type="file" accept=".csv" hidden />
           </section>
-
+          
+          <!-- TAB: UPLOADED SESSIONS -->
           <section class="tab-panel hidden settings-sessions-panel" data-panel="sessions">
             <div class="card-head">
               <h2>Edit uploaded sessions</h2>
@@ -178,6 +180,8 @@
               </div>
             </div>
           </section>
+          
+          <!-- TAB: ACTUAL SETTINGS -->
           <section class="tab-panel hidden" data-panel="user-test">
             <div class="card-head">
               <h2>User experiment settings</h2>
@@ -204,6 +208,7 @@
               <button class="btn btn-danger" id="settingsDeleteUserTestBtn" type="button" data-tooltip="Permanently deletes this experiment">Delete user experiment</button>
             </div>
           </section>
+
         </section>
       </section>
       
@@ -226,7 +231,7 @@
         </div>
       </div>
 
-      <!-- PAGE 2: SESSIONS LIST FOR SELECTED TEST -->
+      <!-- PAGE 2: SESSIONS -->
       <section class="page hidden" id="view-individual">
         <div class="page-head">
           <div>
@@ -249,7 +254,7 @@
 
         <div class="layout-2">
 
-          <!-- LEFT: SESSIONS -->
+          <!-- LEFT PANEL: SESSIONS LIST -->
           <section class="card">
             <div class="card-head">
               <h2>Session List in User experiment</h2>
@@ -369,7 +374,7 @@
             </div>
           </section>
 
-          <!-- RIGHT: SESSION METRICS -->
+          <!-- RIGHT PANEL: SESSION METRICS -->
           <section class="card">
             <div class="card-head">
               <div class="row" style="align-items:center;">
@@ -395,9 +400,11 @@
               <div class="muted small">You can view session details by double-clicking it or using the buttton in the top right corner.</div>
             </div>
           </section>
+
         </div>
       </section>
 
+      <!-- PAGE: GROUPS -->
       <section class="page hidden" id="view-groups">
         <div class="page-head">
           <div>
@@ -456,7 +463,8 @@
           </section>
         </div>
       </section>
-
+      
+      <!-- PAGE: EDIT GROUP -->
       <section class="page hidden" id="view-group-edit">
         <div class="page-head">
           <div>
@@ -473,6 +481,7 @@
           <button class="tab-btn" type="button" role="tab" data-tab="settings">Group settings</button>
         </div>
 
+        <!-- LEFT PANEL: SESSIONS LIST -->
         <section data-group-edit-panel="sessions">
           <div class="layout-2">
             <section class="card">
@@ -532,6 +541,7 @@
               </div>
             </section>
 
+            <!-- RIGHT PANEL: SESSION METRICS -->
             <section class="card">
               <div class="card-head">
                 <h2>Session metrics</h2>
@@ -546,6 +556,7 @@
           </div>
         </section>
 
+        <!-- TAB: GROUP SETTINGS -->
         <section class="hidden" data-group-edit-panel="settings">
           <section class="card">
             <div class="card-head"><h2>Group settings</h2></div>
@@ -562,7 +573,7 @@
         </div>
       </section>
 
-      <!-- PAGE 3: TASKS LIST FOR SELECTED SESSION -->
+      <!-- PAGE: TASKS IN SESSION (INDIVIDUAL SESSION) -->
       <section class="page hidden" id="view-group">
         <div class="page-head">
           <div>
@@ -580,7 +591,7 @@
 
         <div class="layout-2">
 
-          <!-- LEFT: TASKS -->
+          <!-- LEFT PANEL: TASKS -->
           <section class="card">
             <div class="card-head">
               <h2>Tasks</h2>
@@ -595,7 +606,7 @@
             </div>
           </section>
 
-          <!-- RIGHT: PLACEHOLDERS FOR FUTURE -->
+          <!-- RIGHT PANEL: VISUALIZATIONS -->
           <section class="card">
             <div class="card-head">
               <h2>Details</h2>
@@ -603,7 +614,6 @@
             </div>
 
             <div class="stack">
-              <!-- ADDITIVE: button to open timeline -->
               <div class="placeholder-box">
                 <div class="row" style="justify-content:space-between; align-items:center; gap:12px;">
                   <div class="muted small">Timeline + Movement ratios for the whole session</div>
@@ -749,7 +759,7 @@
       </div>
     </div>
 
-    <!-- NEW: TIMELINE MODAL -->
+    <!-- RIGHT PANEL: SESSION METRICS -->
     <div class="modal hidden" id="timelineModal" role="dialog" aria-modal="true" aria-labelledby="timelineModalTitle">
       <div class="modal-backdrop" id="timelineModalBackdrop"></div>
 
@@ -785,6 +795,7 @@
       </div>
     </div>
 
+    <!-- RATIOS MODAL -->
     <div class="modal hidden" id="intervalRatiosModal" role="dialog" aria-modal="true" aria-labelledby="intervalRatiosModalTitle">
       <div class="modal-backdrop" id="intervalRatiosModalBackdrop"></div>
 
@@ -823,6 +834,7 @@
       </div>
     </div>
 
+    <!-- GROUP RATIOS MODAL -->
     <div class="modal hidden" id="groupMovementRatiosModal" role="dialog" aria-modal="true" aria-labelledby="groupMovementRatiosModalTitle">
       <div class="modal-backdrop" id="groupMovementRatiosModalBackdrop"></div>
 
@@ -865,6 +877,7 @@
       </div>
     </div>
 
+    <!-- UPLOAD MODAL -->
     <div class="modal hidden" id="uploadTestModal" role="dialog" aria-modal="true" aria-labelledby="uploadTestTitle">
       <div class="modal-backdrop" id="uploadTestModalBackdrop"></div>
 
@@ -879,7 +892,7 @@
 
         <div class="modal-body">
           <p class="muted" id="uploadTestMessage">
-            Confirm upload. Text in this popup can be adjusted later.
+            Confirm upload.
           </p>
         </div>
 
@@ -891,6 +904,7 @@
     </div>
   </div>
 
+  <!-- SESSION MAP MODAL -->
   <div class="modal hidden" id="sessionMapModal" role="dialog" aria-modal="true" aria-labelledby="sessionMapModalTitle">
     <div class="modal-backdrop" id="sessionMapModalBackdrop"></div>
     <div class="modal-card map-modal-card">
@@ -986,6 +1000,7 @@
     </div>
   </div>
 
+  <!-- CREATE GROUP MODAL -->
   <div class="modal hidden" id="groupCreateModal" role="dialog" aria-modal="true" aria-labelledby="groupCreateTitle">
     <div class="modal-backdrop" id="groupCreateBackdrop"></div>
     <div class="modal-card">
@@ -1034,6 +1049,7 @@
     </div>
   </div>
 
+  <!-- EXPORT MODALS -->
   <div class="modal hidden" id="gazeplotterExportConfirmModal" role="dialog" aria-modal="true" aria-labelledby="gazeplotterExportConfirmTitle">
     <div class="modal-backdrop" id="gazeplotterExportConfirmBackdrop"></div>
     <div class="modal-card">
@@ -1114,7 +1130,7 @@
     </div>
   </div>
 
-
+  <!-- GROUPS COMPARE (DETAIL) MODAL -->
   <div class="modal hidden groups-compare-modal" id="groupsCompareModal" role="dialog" aria-modal="true"
     aria-labelledby="groupsCompareTitle">
     <div class="modal-backdrop" id="groupsCompareBackdrop"></div>
@@ -1176,6 +1192,7 @@
     </div>
   </div>
 
+  <!-- VISIBLE FILTERS MODAL -->
   <div class="modal hidden" id="visibleFiltersModal" role="dialog" aria-modal="true" aria-labelledby="visibleFiltersModalTitle">
     <div class="modal-backdrop" id="visibleFiltersModalBackdrop"></div>
     <div class="modal-card">
@@ -1195,7 +1212,7 @@
     </div>
   </div>
 
-
+  <!-- GLOBAL FOOTER -->
   <footer class="app-footer" aria-label="Footer">
     <div class="app-footer-content">
       <p>MishPink Data Explorer, version 1.3 (April 2026)</p>

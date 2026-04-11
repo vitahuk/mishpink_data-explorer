@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =========================================================
-# SQLite weekly backup for Diplomka app
+# SQLite weekly backup for Mishpink Data Explorer
 # =========================================================
 # Optional env vars:
 #   APP_DATA_DIR        Base app data dir (default: /home/vita/diplomka/data)

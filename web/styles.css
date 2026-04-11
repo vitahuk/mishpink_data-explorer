@@ -1,3 +1,7 @@
+
+/* Global UI styles for the Mishpink data explorer frontend.
+   Rules are organized by shared layout primitives, navigation, pages, and feature views. */
+
 :root {
   --bg: #0b0e13;
   --panel: #0f1522;
@@ -10,6 +14,7 @@
   --shadow: 0 12px 40px rgba(0, 0, 0, .35);
 }
 
+/* Base reset and shared element defaults */
 * {
   box-sizing: border-box;
 }
@@ -39,6 +44,7 @@ input[type="checkbox"] {
   accent-color: #17bba0;
 }
 
+/* App shell and authentication layout */
 .app {
   min-height: 100vh;
   display: grid;
@@ -115,6 +121,7 @@ input[type="checkbox"] {
   justify-content: center;
 }
 
+/* Top navigation and breadcrumb */
 .topbar {
   position: sticky;
   top: 0;
@@ -210,6 +217,7 @@ input[type="checkbox"] {
   font-size: 13px;
 }
 
+/* Page-level structure and global status message */
 .main {
   padding: 18px;
 }
