@@ -25,9 +25,19 @@ The project was carried out in collaboration between the Department of Geography
 - HTML / CSS / JavaScript  
 - SQLite  
 
+## ⚠️ Important Notice
+
+This application operates on a shared live database.
+
+- Any data modifications (including deletions) are permanent and immediately affect all users.
+- The system uses SQLite, which supports only limited concurrent access (approximately up to 5 users at a time).
+- Multiple users may interact with the same data simultaneously, which can result in changes being overwritten or removed during use.
+
+Please use the application with caution, especially in multi-user scenarios.
+
 ## Notes
 - This application is a research prototype and not intended as a production system  
-- Supported data format corresponds to MishPink exports only  
+- Supported data format corresponds to MishPink exports only
 
 ## Author
 Vítězslav Huk (Masaryk University)

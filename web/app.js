@@ -571,6 +571,12 @@ function normalizeTestId(value) {
   return trimmed ? trimmed : null;
 }
 
+function sortTestIdsNewestFirst(testIds) {
+  return [...testIds].sort((a, b) =>
+    String(b).localeCompare(String(a), undefined, { numeric: true, sensitivity: "base" })
+  );
+}
+
 // ===== Local Persistence & App-Level Messaging =====
 // Local storage keeps the currently selected experiment stable between reloads.
 function loadTestsFromStorage() {
@@ -585,7 +591,7 @@ function loadTestsFromStorage() {
     tests = [];
   }
 
-  tests = Array.from(new Set(tests));
+   tests = sortTestIdsNewestFirst(Array.from(new Set(tests)));
   saveTestsToStorage(tests);
   return tests;
 }
@@ -626,7 +632,7 @@ function syncTestsWithSessions(sessions) {
     seen.add(testId);
     state.tests.push(testId);
   });
-  state.tests = Array.from(new Set(state.tests));
+  state.tests = sortTestIdsNewestFirst(Array.from(new Set(state.tests)));
   saveTestsToStorage(state.tests);
 }
 
@@ -1932,7 +1938,7 @@ async function loadTestsCatalogFromBackend() {
       .map((row) => normalizeTestId(row?.id))
       .filter(Boolean);
 
-    state.tests = Array.from(new Set(ids));
+    state.tests = sortTestIdsNewestFirst(Array.from(new Set(ids)));
     saveTestsToStorage(state.tests);
 
     if (!state.tests.includes(state.selectedTestId)) {
@@ -2355,8 +2361,9 @@ async function saveUserTestSettings() {
     const updatedTestId = normalizeTestId(out?.test_id) ?? previousTestId;
 
     if (updatedTestId !== previousTestId) {
-      state.tests = (state.tests ?? []).map((id) => (id === previousTestId ? updatedTestId : id));
-      state.tests = Array.from(new Set(state.tests));
+      state.tests = sortTestIdsNewestFirst(
+        Array.from(new Set((state.tests ?? []).map((id) => (id === previousTestId ? updatedTestId : id))))
+      );
       saveTestsToStorage(state.tests);
 
       if (state.correctAnswers?.[previousTestId]) {
