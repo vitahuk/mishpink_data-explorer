@@ -35,6 +35,10 @@ a {
   color: inherit;
 }
 
+input[type="checkbox"] {
+  accent-color: #17bba0;
+}
+
 .app {
   min-height: 100vh;
   display: grid;
@@ -155,40 +159,55 @@ a {
 .breadcrumb {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 13px;
+  gap: 12px;
+  font-size: 15px;
   color: var(--muted);
+  flex-wrap: wrap;
 }
 
 .crumb {
   color: var(--text);
+  border-radius: 8px;
 }
 
 .crumb-btn {
   appearance: none;
   border: 0;
   background: transparent;
-  padding: 0;
+  padding: 3px 8px;
   font: inherit;
   cursor: pointer;
-  transition: color .15s ease, opacity .15s ease;
+  transition: color .15s ease, opacity .15s ease, background .15s ease;
+  min-height: 30px;
+  line-height: 1.2;
 }
 
 .crumb-btn:hover {
-  color: var(--accent);
+  background: rgba(106, 166, 255, .12);
 }
 
 .crumb-btn:disabled {
   cursor: default;
-  opacity: .7;
+  opacity: 1;
 }
 
 .crumb.muted {
   color: var(--muted);
 }
 
+.crumb-link {
+  color: #cfd9ef;
+}
+
+.crumb-current {
+  color: #fff;
+  font-weight: 700;
+  background: rgba(139, 167, 255, .18);
+}
+
 .crumb-sep {
   color: rgba(168, 179, 204, .35);
+  font-size: 13px;
 }
 
 .main {
@@ -449,6 +468,70 @@ p {
 }
 
 .list-item.is-selected .title {
+  font-weight: 800;
+}
+
+.list-item-split {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.list-item-split.is-active-row {
+  border-color: rgba(106, 166, 255, .85);
+  box-shadow: 0 0 0 4px rgba(106, 166, 255, .18);
+}
+
+.list-item-checkbox-col {
+  display: grid;
+  place-items: center;
+  background: rgba(8, 12, 22, .55);
+  border-right: 1px solid rgba(106, 166, 255, .22);
+  min-height: 52px;
+}
+
+.list-item-checkbox-col:hover {
+  background: rgba(106, 166, 255, .10);
+}
+
+.list-item-split.is-checked .list-item-checkbox-col {
+  background: rgba(106, 166, 255, .16);
+  border-right-color: rgba(106, 166, 255, .45);
+}
+
+.list-item-main {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+
+.list-item-main:hover {
+  background: rgba(106, 166, 255, .08);
+}
+
+.list-item-main:focus-visible {
+  outline: 2px solid rgba(106, 166, 255, .7);
+  outline-offset: -2px;
+}
+
+.list-item-main.is-selected {
+  background: rgba(106, 166, 255, .14);
+}
+
+.list-item-main.is-selected .title {
   font-weight: 800;
 }
 

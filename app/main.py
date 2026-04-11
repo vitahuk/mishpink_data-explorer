@@ -49,6 +49,7 @@ from app.parsing.maptrack_csv import (
     infer_session_id_from_filename,
     validate_maptrack_df,
     build_spatial_trace_for_user,
+    _normalize_task_id,
 )
 from app.parsing.column_aliases import SOC_DEMO_COLUMN_ALIASES, resolve_column_aliases, resolve_single_column
 from app.analysis.metrics import (
@@ -370,7 +371,7 @@ def _read_session_events_df(csv_path: Path) -> pd.DataFrame:
     current_task: Optional[str] = None
     for _, row in df.iterrows():
         raw_task = row.get("task")
-        task = None if pd.isna(raw_task) else str(raw_task).strip() or None
+        task = _normalize_task_id(raw_task)
 
         if task:
             current_task = task
@@ -382,8 +383,9 @@ def _read_session_events_df(csv_path: Path) -> pd.DataFrame:
         detail = None if pd.isna(raw_detail) else str(raw_detail).strip() or None
 
         if event_name == "setting task" and detail:
-            current_task = detail
-            inferred_tasks.append(detail)
+            normalized_detail_task = _normalize_task_id(detail)
+            current_task = normalized_detail_task
+            inferred_tasks.append(normalized_detail_task)
             continue
 
         inferred_tasks.append(current_task)

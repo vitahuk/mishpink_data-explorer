@@ -292,7 +292,11 @@ def _normalize_task_id(v: Any) -> Optional[str]:
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
     s = str(v).strip()
-    return s if s else None
+    if not s:
+        return None
+    if s in {"0", "00"}:
+        return "00"
+    return s
 
 def _resolve_row_task_id(row: pd.Series, current_task: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
     event_name = str(row.get("event_name", "")).strip()
@@ -304,7 +308,7 @@ def _resolve_row_task_id(row: pd.Series, current_task: Optional[str]) -> Tuple[O
     if event_name == "setting task":
         inferred = parsed.get("task_id")
         if isinstance(inferred, str) and inferred.strip():
-            next_current_task = inferred.strip()
+            next_current_task = _normalize_task_id(inferred.strip())
             if not task_id:
                 task_id = next_current_task
 
@@ -598,7 +602,6 @@ def parse_session_df(
         if user_id_col and len(df) > 0:
             user_id = _normalize_task_id(df[user_id_col].iloc[0])
 
-    has_task_column = "task" in df.columns
     current_task: Optional[str] = None  # pro fallback režim
 
     events: List[ParsedEvent] = []
@@ -615,24 +618,7 @@ def parse_session_df(
 
         parsed = parse_event_detail(event_name, raw_detail)
 
-        task_id: Optional[str] = None
-
-        if has_task_column:
-            task_id = _normalize_task_id(row.get("task"))
-        else:
-            # fallback: task se přepíná podle "setting task"
-            if event_name == "setting task":
-                inferred = parsed.get("task_id")
-                if isinstance(inferred, str) and inferred.strip():
-                    current_task = inferred.strip()
-            task_id = current_task
-
-        # ještě jeden fallback: některá data mohou mít task prázdný,
-        # ale zároveň je možné ho vyčíst z eventu "setting task"
-        if (task_id is None or task_id == "") and event_name == "setting task":
-            inferred = parsed.get("task_id")
-            if isinstance(inferred, str) and inferred.strip():
-                task_id = inferred.strip()
+        task_id, current_task = _resolve_row_task_id(row, current_task)
 
         ev = ParsedEvent(
             timestamp_ms=ts,

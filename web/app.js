@@ -1527,6 +1527,36 @@ function formatSortSummary(sortConfig) {
   return `${opt.label} (${dir})`;
 }
 
+function renderSeparatedSelectionRow({
+  itemId,
+  title,
+  checkboxRole,
+  checkboxDataKey,
+  isChecked = false,
+  isActive = false,
+  badgeText = "",
+}) {
+  const activeClass = isActive ? "is-selected" : "";
+  const activeRowClass = isActive ? "is-active-row" : "";
+  const checkedClass = isChecked ? "is-checked" : "";
+  const checkedAttr = isChecked ? "checked" : "";
+  const safeDataKey = escapeHtml(checkboxDataKey);
+  const safeItemId = escapeHtml(itemId);
+  const safeTitle = escapeHtml(title ?? "—");
+  const safeBadge = escapeHtml(badgeText ?? "");
+  return `
+    <div class="list-item list-item-split ${checkedClass} ${activeRowClass}">
+      <div class="list-item-checkbox-col" aria-label="Selection checkbox column">
+        <input type="checkbox" data-role="${escapeHtml(checkboxRole)}" data-${safeDataKey}="${safeItemId}" ${checkedAttr} />
+      </div>
+      <button class="list-item-main ${activeClass}" type="button" data-role="list-main" data-${safeDataKey}="${safeItemId}">
+        <div class="title">${safeTitle}</div>
+        ${safeBadge ? `<span class="pill">${safeBadge}</span>` : ""}
+      </button>
+    </div>
+  `;
+}
+
 function renderSessionsList() {
   const listEl = $("#sessionsList");
   if (!listEl) return;
@@ -1563,30 +1593,24 @@ function renderSessionsList() {
   }
 
   listEl.innerHTML = filteredSessions.map((s) => {
-    const selected = s.session_id === state.selectedSessionId ? "is-selected" : "";
-    const checked = (state.selectedSessionIds ?? []).includes(s.session_id) ? "checked" : "";
-
-    return `
-      <div class="list-item ${selected}" data-session="${escapeHtml(s.session_id)}" style="cursor:default;">
-        <div class="row" style="justify-content:flex-start; gap:10px; cursor:default;">
-          <input type="checkbox" data-role="group-select" data-session="${escapeHtml(s.session_id)}" ${checked} />
-          <div>
-            <div class="title">${escapeHtml(s.user_id ?? "—")}</div>
-          </div>
-        </div>
-      </div>
-    `;
-
+    const isActive = s.session_id === state.selectedSessionId;
+    const isChecked = (state.selectedSessionIds ?? []).includes(s.session_id);
+    return renderSeparatedSelectionRow({
+      itemId: s.session_id,
+      title: s.user_id ?? "—",
+      checkboxRole: "group-select",
+      checkboxDataKey: "session",
+      isChecked,
+      isActive,
+    });
   }).join("");
 
-  $$("#sessionsList .list-item").forEach(item => {
-    item.addEventListener("click", (e) => {
-      if (e.target?.matches?.('input[data-role="group-select"]')) return;
+  $$("#sessionsList .list-item-main").forEach(item => {
+    item.addEventListener("click", () => {
       const id = item.dataset.session;
       selectSession(id);
     });
     item.addEventListener("dblclick", async (e) => {
-      if (e.target?.matches?.('input[data-role="group-select"]')) return;
       const id = item.dataset.session;
       if (!id) return;
       selectSession(id);
@@ -1599,6 +1623,7 @@ function renderSessionsList() {
   });
 
   $$("#sessionsList input[data-role='group-select']").forEach((input) => {
+    input.addEventListener("click", (e) => e.stopPropagation());
     input.addEventListener("dblclick", (e) => {
       e.stopPropagation();
     });
@@ -6001,24 +6026,22 @@ function renderGroupsPage() {
     groupsListEl.innerHTML = `<div class="empty"><div class="empty-title">No groups match the filter</div><div class="muted small">Try adjusting the search text.</div></div>`;
   } else {
     groupsListEl.innerHTML = filteredGroups.map((g) => {
-    const selected = g.id === state.selectedGroupId ? "is-selected" : "";
-    const checked = (state.selectedGroupCompareIds ?? []).includes(g.id) ? "checked" : "";
+    const isActive = g.id === state.selectedGroupId;
+    const isChecked = (state.selectedGroupCompareIds ?? []).includes(g.id);
     const count = Array.isArray(g.sessions) ? g.sessions.length : 0;
-    return `
-      <div class="list-item ${selected}" data-group="${escapeHtml(g.id)}">
-        <div class="row">
-          <label class="row" style="justify-content:flex-start; gap:10px;">
-            <input type="checkbox" data-role="group-compare-select" data-group="${escapeHtml(g.id)}" ${checked} />
-            <div class="title">${escapeHtml(g.name ?? "Untitled")}</div>
-          </label>
-          <span class="pill">${count} users</span>
-        </div>
-      </div>
-    `;
+    return renderSeparatedSelectionRow({
+      itemId: g.id,
+      title: g.name ?? "Untitled",
+      checkboxRole: "group-compare-select",
+      checkboxDataKey: "group",
+      isChecked,
+      isActive,
+      badgeText: `${count} users`,
+    });
   }).join("");
   }
 
-  $$("#groupsList .list-item").forEach((item) => {
+  $$("#groupsList .list-item-main").forEach((item) => {
     item.addEventListener("click", () => {
       state.selectedGroupId = item.dataset.group;
       updateBreadcrumbs();
@@ -6802,64 +6825,168 @@ async function deleteCurrentGroup() {
 
 
 // ===== Selection + Breadcrumbs =====
-function getBreadcrumbState() {
-  const currentPage = state.currentPage ?? "dashboard";
-  const detailSessionLabel = state.selectedSession?.user_id ?? (state.selectedSessionId ?? null);
-  const detailGroupLabel = getSelectedGroup()?.name ?? state.selectedGroupId ?? null;
+function getDefaultSessionFilters() {
+  return {
+    gender: "",
+    ageMin: "",
+    ageMax: "",
+    occupation: "",
+    nationality: "",
+    education: "",
+    device: "",
+    confidence: "",
+    paper_maps: "",
+    computer_maps: "",
+    mobile_maps: "",
+    tasksMin: "",
+    tasksMax: "",
+    eventsMin: "",
+    eventsMax: "",
+    durationMin: "",
+    durationMax: "",
+    accuracyMin: "",
+    accuracyMax: "",
+    userIdQuery: "",
+  };
+}
 
-  const breadcrumb = {
-    root: { label: "Dashboard", disabled: currentPage === "dashboard" },
-    test: state.selectedTestId
-      ? {
-          label: getCurrentTestDisplayName() || state.selectedTestId,
-          disabled: currentPage === "dashboard" || currentPage === "settings",
-        }
-      : null,
-    section: null,
-    detail: null,
+function resetSessionsViewState() {
+  state.sessionFilters = getDefaultSessionFilters();
+  state.visibleSessionFilters = [...DEFAULT_VISIBLE_SESSION_FILTERS];
+  saveVisibleFilters(SESSION_VISIBLE_FILTERS_KEY, state.visibleSessionFilters);
+  state.selectedSessionId = null;
+  state.selectedSession = null;
+  state.selectedSessionIds = [];
+  persistGroupDraftSelection();
+  applySessionFilterVisibility();
+  renderSessionsList();
+  renderSessionMetrics();
+}
+
+function resetGroupsViewState() {
+  state.groupsSearchQuery = "";
+  const searchEl = $("#groupsSearchInput");
+  if (searchEl) searchEl.value = "";
+  state.selectedGroupId = null;
+  renderGroupsPage();
+}
+
+function getBreadcrumbItems() {
+  const currentPage = state.currentPage ?? "dashboard";
+  const currentTestLabel = getCurrentTestDisplayName() || "User experiment";
+  const detailSessionLabel = state.selectedSession?.user_id ?? state.selectedSessionId ?? "Session";
+  const detailGroupLabel = getSelectedGroup()?.name ?? state.selectedGroupId ?? "Group";
+  const hasTest = !!normalizeTestId(state.selectedTestId);
+  const experimentCrumb = {
+    label: currentTestLabel,
+    current: false,
+    onClick: async () => {
+      if (!hasTest) return;
+      await navigateToRoute({ name: ROUTE_NAMES.SESSIONS, testId: state.selectedTestId });
+    },
   };
 
-  if (currentPage === "individual" || currentPage === "group") {
-    breadcrumb.section = { label: "Sessions", disabled: currentPage === "individual" };
-    if (detailSessionLabel) breadcrumb.detail = { label: detailSessionLabel, disabled: currentPage === "group" };
-  } else if (currentPage === "groups" || currentPage === "group-edit") {
-    breadcrumb.section = { label: "Groups", disabled: currentPage === "groups" };
-    if (detailGroupLabel) breadcrumb.detail = { label: detailGroupLabel, disabled: currentPage === "groups" };
+  if (currentPage === "dashboard") {
+    return [{ label: "Dashboard", current: true }];
   }
 
-  return breadcrumb;
+  if (currentPage === "settings") {
+    return [
+      { label: "Dashboard", current: false, onClick: async () => navigateToRoute({ name: ROUTE_NAMES.DASHBOARD }) },
+      experimentCrumb,
+      { label: "Settings", current: true },
+    ];
+  }
+
+  if (currentPage === "individual") {
+    return [
+      { label: "Dashboard", current: false, onClick: async () => navigateToRoute({ name: ROUTE_NAMES.DASHBOARD }) },
+      experimentCrumb,
+      {
+        label: "Sessions",
+        current: false,
+        onClick: async () => {
+          if (!hasTest) return;
+          resetSessionsViewState();
+          await navigateToRoute({ name: ROUTE_NAMES.SESSIONS, testId: state.selectedTestId }, { replace: true });
+        },
+      },
+    ];
+  }
+
+  if (currentPage === "group") {
+    return [
+      { label: "Dashboard", current: false, onClick: async () => navigateToRoute({ name: ROUTE_NAMES.DASHBOARD }) },
+      experimentCrumb,
+      {
+        label: "Sessions",
+        current: false,
+        onClick: async () => {
+          if (!hasTest) return;
+          await navigateToRoute({ name: ROUTE_NAMES.SESSIONS, testId: state.selectedTestId });
+        },
+      },
+      { label: detailSessionLabel, current: true },
+    ];
+  }
+
+  if (currentPage === "groups") {
+    return [
+      { label: "Dashboard", current: false, onClick: async () => navigateToRoute({ name: ROUTE_NAMES.DASHBOARD }) },
+      experimentCrumb,
+      {
+        label: "Groups",
+        current: false,
+        onClick: async () => {
+          if (!hasTest) return;
+          resetGroupsViewState();
+          await navigateToRoute({ name: ROUTE_NAMES.GROUPS, testId: state.selectedTestId }, { replace: true });
+        },
+      },
+    ];
+  }
+
+  if (currentPage === "group-edit") {
+    return [
+      { label: "Dashboard", current: false, onClick: async () => navigateToRoute({ name: ROUTE_NAMES.DASHBOARD }) },
+      experimentCrumb,
+      {
+        label: "Groups",
+        current: false,
+        onClick: async () => {
+          if (!hasTest) return;
+          await navigateToRoute({ name: ROUTE_NAMES.GROUPS, testId: state.selectedTestId });
+        },
+      },
+      { label: detailGroupLabel, current: true },
+    ];
+  }
+
+  return [{ label: "Dashboard", current: true }];
 }
 
 function updateBreadcrumbs() {
-  const rootEl = $("#crumb-root");
-  const testEl = $("#crumb-test");
-  const sectionEl = $("#crumb-section");
-  const detailEl = $("#crumb-detail");
-  const testSepEl = $("#crumb-test-sep");
-  const sectionSepEl = $("#crumb-section-sep");
-  const detailSepEl = $("#crumb-detail-sep");
-  const breadcrumb = getBreadcrumbState();
+  const crumbEls = [$("#crumb-root"), $("#crumb-test"), $("#crumb-section"), $("#crumb-detail")];
+  const sepEls = [$("#crumb-test-sep"), $("#crumb-section-sep"), $("#crumb-detail-sep")];
+  const items = getBreadcrumbItems();
+  state.breadcrumbItems = items;
 
-  const applyCrumb = (el, sepEl, data) => {
-    if (!el || !sepEl) return;
-    const hidden = !data;
+  crumbEls.forEach((el, idx) => {
+    if (!el) return;
+    const item = items[idx];
+    const hidden = !item;
     el.classList.toggle("hidden", hidden);
-    sepEl.classList.toggle("hidden", hidden);
     if (hidden) return;
-    el.textContent = data.label;
-    el.disabled = !!data.disabled;
-    el.classList.toggle("muted", !!data.disabled);
-  };
+    el.textContent = item.label;
+    el.disabled = !!item.current;
+    el.classList.toggle("crumb-current", !!item.current);
+    el.classList.toggle("crumb-link", !item.current);
+  });
 
-  if (rootEl) {
-    rootEl.textContent = breadcrumb.root.label;
-    rootEl.disabled = !!breadcrumb.root.disabled;
-    rootEl.classList.toggle("muted", !!breadcrumb.root.disabled);
-  }
-
-  applyCrumb(testEl, testSepEl, breadcrumb.test);
-  applyCrumb(sectionEl, sectionSepEl, breadcrumb.section);
-  applyCrumb(detailEl, detailSepEl, breadcrumb.detail);
+  sepEls.forEach((sepEl, idx) => {
+    if (!sepEl) return;
+    sepEl.classList.toggle("hidden", idx >= items.length - 1);
+  });
 }
 
 function renderSelectedTestState() {
@@ -6929,8 +7056,10 @@ function selectSession(sessionId) {
   state.intervalRatiosSelection.taskKey = "ALL_TASKS";
   updateBreadcrumbs();
 
-  $$("#sessionsList .list-item").forEach(item => {
-    item.classList.toggle("is-selected", item.dataset.session === sessionId);
+  $$("#sessionsList .list-item-main").forEach((itemMain) => {
+    const isSelected = itemMain.dataset.session === sessionId;
+    itemMain.classList.toggle("is-selected", isSelected);
+    itemMain.closest(".list-item-split")?.classList.toggle("is-active-row", isSelected);
   });
 
   renderSessionMetrics();
@@ -6976,39 +7105,12 @@ function resetClientStateForLogout() {
 }
 
 function wireNavButtons() {
-  $("#crumb-root")?.addEventListener("click", async () => {
-    await navigateToRoute({ name: ROUTE_NAMES.DASHBOARD });
-  });
-
-  $("#crumb-test")?.addEventListener("click", async () => {
-    if (!state.selectedTestId) return;
-    await navigateToRoute({ name: ROUTE_NAMES.DASHBOARD });
-  });
-
-  $("#crumb-section")?.addEventListener("click", async () => {
-    if (state.currentPage === "group" || state.currentPage === "individual") {
-      await navigateToRoute({ name: ROUTE_NAMES.SESSIONS, testId: state.selectedTestId });
-      return;
-    }
-
-    if (state.currentPage === "groups" || state.currentPage === "group-edit") {
-      await navigateToRoute({ name: ROUTE_NAMES.GROUPS, testId: state.selectedTestId });
-    }
-  });
-
-  $("#crumb-detail")?.addEventListener("click", async () => {
-    if ((state.currentPage === "individual" || state.currentPage === "group") && state.selectedSessionId) {
-      await navigateToRoute({
-        name: ROUTE_NAMES.SESSION_DETAIL,
-        testId: state.selectedTestId,
-        sessionId: state.selectedSessionId,
-      });
-      return;
-    }
-
-    if ((state.currentPage === "groups" || state.currentPage === "group-edit") && state.selectedGroupId) {
-      await navigateToRoute({ name: ROUTE_NAMES.GROUPS, testId: state.selectedTestId });
-    }
+  [$("#crumb-root"), $("#crumb-test"), $("#crumb-section"), $("#crumb-detail")].forEach((el, idx) => {
+    el?.addEventListener("click", async () => {
+      const item = state.breadcrumbItems?.[idx];
+      if (!item || item.current || typeof item.onClick !== "function") return;
+      await item.onClick();
+    });
   });
 
   $("#backToTestsBtn")?.addEventListener("click", async () => {
@@ -7573,28 +7675,7 @@ if (!genderEl || !occupationEl || !nationalityEl || !educationEl || !deviceEl ||
   });
 
   clearBtn.addEventListener("click", () => {
-    state.sessionFilters = {
-      gender: "",
-      ageMin: "",
-      ageMax: "",
-      occupation: "",
-      nationality: "",
-      education: "",
-      device: "",
-      confidence: "",
-      paper_maps: "",
-      computer_maps: "",
-      mobile_maps: "",
-      tasksMin: "",
-      tasksMax: "",
-      eventsMin: "",
-      eventsMax: "",
-      durationMin: "",
-      durationMax: "",
-      accuracyMin: "",
-      accuracyMax: "",
-      userIdQuery: "",
-    };
+    state.sessionFilters = getDefaultSessionFilters();
     renderSessionsList();
   });
 }
